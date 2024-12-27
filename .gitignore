@@ -1,0 +1,17 @@
+/testdata/
+/vendor/
+/misc/
+/api/
+/db/
+
+# ignore symbolic links
+/lexicons/app/bsky
+/lexicons/chat/bsky
+/lexicons/com/atproto
+/lexicons/tools/ozone
+
+/lex/gen.go
+/lex/gen_test.go
+*.txt
+.sqlfluff
+.env

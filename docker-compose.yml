@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=at
+      - POSTGRES_DB=at
+      - POSTGRES_PASSWORD=testlab
+    volumes:
+      - database:/var/lib/postgresql/data
+      # - ./db/init/:/docker-entrypoint-initdb.d
+      # - ./db:/app
+    ports: ["5432:5432"]
+
+  # for debugging
+  pdsls:
+    image: harrybrwn/pdsls:latest
+    ports: ["8080:8080"]
+
+volumes:
+  database:
