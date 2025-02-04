@@ -193,3 +193,8 @@ func getAccountAdminStatus(ctx context.Context, d db.DB, did string) (*accountAd
 		Deactivated: deactivated,
 	}, nil
 }
+
+func executeWithRetry(ctx context.Context, fn func(ctx context.Context) error) error {
+	// TODO implement retries
+	return fn(ctx)
+}
