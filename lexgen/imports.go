@@ -109,6 +109,7 @@ func addClientImports(imports map[string]*Import, def *lex.TypeSchema) {
 	addImport(imports,
 		"context",
 		"github.com/harrybrwn/at/xrpc",
+		"github.com/pkg/errors",
 	)
 	switch def.Type {
 	case lex.TypeQuery:
@@ -153,7 +154,6 @@ func addClientImports(imports map[string]*Import, def *lex.TypeSchema) {
 			imports,
 			"context",
 			"iter",
-			"errors",
 		)
 	}
 

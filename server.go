@@ -11,10 +11,10 @@ import (
 	"github.com/harrybrwn/env"
 	"github.com/spf13/cobra"
 
-	"github.com/harrybrwn/at/api/com/atproto"
 	"github.com/harrybrwn/at/internal/actorstore"
 	"github.com/harrybrwn/at/internal/middleware"
 	"github.com/harrybrwn/at/internal/pds"
+	"github.com/harrybrwn/at/internal/sequencer"
 	"github.com/harrybrwn/at/pubsub"
 	"github.com/harrybrwn/at/xrpc"
 )
@@ -79,12 +79,12 @@ Most API routes are under /xrpc/`)
 				logger,
 				&actorstore.ActorStore{Dir: conf.ActorStore.Directory},
 				accounts,
-				pubsub.NewMemoryBus[*atproto.SyncSubscribeReposUnion](),
+				pubsub.NewMemoryBus[*sequencer.Event[*pds.Event]](),
 			)
 			if err != nil {
 				return err
 			}
-			pds.Passthrough = xrpc.NewClient(conf.BskyAppView.URLHost())
+			pds.Passthrough = xrpc.NewClient(xrpc.WithEnv(), xrpc.WithURL(conf.BskyAppView.URL))
 			routes(s, pds)
 			logger.Info("starting server", "port", conf.Port)
 			if conf.DevMode {

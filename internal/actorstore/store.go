@@ -76,7 +76,10 @@ func (as *ActorStore) Record(did syntax.DID) (*RecordReader, error) {
 
 func (as *ActorStore) Repo(did syntax.DID, key crypto.PrivateKeyExportable) (*SQLRepoReader, error) {
 	ds, err := as.datastore(did)
-	return NewSQLRepoReader(ds.db, did, key), err
+	if err != nil {
+		return nil, err
+	}
+	return NewSQLRepoReader(ds.db, did, key), nil
 }
 
 func (as *ActorStore) Destroy(did syntax.DID) error {
@@ -90,13 +93,13 @@ func (as *ActorStore) datastore(did syntax.DID) (ds *datastore, err error) {
 	_, dbpath, keypath := as.location(did)
 	database, err := as.openDB(dbpath)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to open database %q", dbpath)
 	}
 	ds.db = db.Simple(database)
 	ds.key, err = as.key(keypath)
 	if err != nil {
 		database.Close()
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to open private key %q", keypath)
 	}
 	return ds, nil
 }
@@ -178,6 +181,11 @@ func (as *ActorStore) location(did syntax.DID) (dir, db, key string) {
 	db = filepath.Join(dir, "store.sqlite")
 	key = filepath.Join(dir, "key")
 	return dir, db, key
+}
+
+func RunMigration(d *sql.DB) error {
+	_, err := d.Exec(string(migration))
+	return err
 }
 
 type ActorStoreTransactor struct {

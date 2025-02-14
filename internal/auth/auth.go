@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"time"
 
+	"github.com/bluesky-social/indigo/atproto/crypto"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pkg/errors"
 )
@@ -115,8 +116,7 @@ func CreateRefreshToken(opts *CreateTokenOpts) (string, error) {
 	return signedToken, nil
 }
 
-// getRefreshTokenID generates a unique identifier for the refresh token.
-func GetRefreshTokenID() (string, error) {
+func GenerateJTI() (string, error) {
 	bytes := make([]byte, 32)
 	_, err := rand.Read(bytes)
 	if err != nil {
@@ -124,6 +124,11 @@ func GetRefreshTokenID() (string, error) {
 	}
 	encoded := base64.StdEncoding.EncodeToString(bytes)
 	return encoded[:len(encoded)-1], nil // Trim padding '=' characters
+}
+
+// getRefreshTokenID generates a unique identifier for the refresh token.
+func GetRefreshTokenID() (string, error) {
+	return GenerateJTI()
 }
 
 // GenerateRandomToken generates a random token formatted as xxxxx-xxxxx
@@ -138,4 +143,120 @@ func GenerateRandomToken() (string, error) {
 	token := base32.StdEncoding.EncodeToString(bytes)[:10]
 	// Format as xxxxx-xxxxx
 	return token[:5] + "-" + token[5:10], nil
+}
+
+type (
+	SigningMethodK256 struct{}
+	SigningMethodP256 struct{}
+)
+
+var (
+	K256SigningMethod *SigningMethodK256
+	P256SigningMethod *SigningMethodP256
+)
+
+func init() {
+	K256SigningMethod = new(SigningMethodK256)
+	jwt.RegisterSigningMethod("ES256K", func() jwt.SigningMethod {
+		return K256SigningMethod
+	})
+	P256SigningMethod = new(SigningMethodP256)
+	jwt.RegisterSigningMethod("ES256", func() jwt.SigningMethod {
+		return P256SigningMethod
+	})
+}
+
+// Returns nil if signature is valid
+func (sm *SigningMethodK256) Verify(signingString string, sig []byte, key any) (err error) {
+	var pubkey *crypto.PublicKeyK256
+	switch k := key.(type) {
+	case *crypto.PublicKeyK256:
+		pubkey = k
+	case *crypto.PrivateKeyK256:
+		var pk crypto.PublicKey
+		pk, err = k.PublicKey()
+		if err != nil {
+			return err
+		}
+		pubkey = pk.(*crypto.PublicKeyK256)
+	case []byte:
+		pk, err := crypto.ParsePrivateBytesK256(k)
+		if err != nil {
+			return err
+		}
+		var pub crypto.PublicKey
+		pub, err = pk.PublicKey()
+		if err != nil {
+			return err
+		}
+		pubkey = pub.(*crypto.PublicKeyK256)
+	default:
+		return errors.Errorf("wrong key type: got %T", key)
+	}
+	err = pubkey.HashAndVerify([]byte(signingString), sig)
+	if errors.Is(err, crypto.ErrInvalidSignature) {
+		return jwt.ErrSignatureInvalid
+	}
+	return err
+}
+
+// Returns signature or error
+func (sm *SigningMethodK256) Sign(signingString string, key any) ([]byte, error) {
+	switch k := key.(type) {
+	case *crypto.PrivateKeyK256:
+		return k.HashAndSign([]byte(signingString))
+	case []byte:
+		pk, err := crypto.ParsePrivateBytesK256(k)
+		if err != nil {
+			return nil, err
+		}
+		return pk.HashAndSign([]byte(signingString))
+	default:
+		return nil, errors.Errorf("wrong key type: got %T", key)
+	}
+}
+
+func (sm *SigningMethodK256) Alg() string {
+	return "ES256K"
+}
+
+func (sm *SigningMethodP256) Verify(signingString string, sig []byte, key any) (err error) {
+	var pubkey *crypto.PublicKeyP256
+	switch k := key.(type) {
+	case *crypto.PrivateKeyP256:
+		var pk crypto.PublicKey
+		pk, err = k.PublicKey()
+		if err != nil {
+			return err
+		}
+		pubkey = pk.(*crypto.PublicKeyP256)
+	case *crypto.PublicKeyP256:
+		pubkey = k
+	default:
+		return errors.Errorf("wrong key type: got %T", key)
+	}
+	err = pubkey.HashAndVerify([]byte(signingString), sig)
+	if errors.Is(err, crypto.ErrInvalidSignature) {
+		return jwt.ErrSignatureInvalid
+	}
+	return err
+}
+
+func (sm *SigningMethodP256) Sign(signingString string, key any) ([]byte, error) {
+	switch k := key.(type) {
+	case *crypto.PrivateKeyP256:
+		return k.HashAndSign([]byte(signingString))
+	case []byte:
+		pk, err := crypto.ParsePrivateBytesP256(k)
+		if err != nil {
+			return nil, err
+		}
+		return pk.HashAndSign([]byte(signingString))
+	default:
+		return nil, errors.Errorf("wrong key type: got %T", key)
+	}
+}
+
+func (sm *SigningMethodP256) Alg() string {
+	return "ES256"
 }

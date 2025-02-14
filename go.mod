@@ -31,6 +31,7 @@ require (
 	github.com/whyrusleeping/cbor-gen v0.2.1-0.20241030202151-b7a6831be65e
 	github.com/whyrusleeping/go-did v0.0.0-20230824162731-404d1707d5d6
 	golang.org/x/crypto v0.31.0
+	golang.org/x/net v0.33.0
 	golang.org/x/tools v0.28.0
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da
 )
@@ -130,7 +131,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/exp v0.0.0-20241217172543-b2144cdd0a67 // indirect
 	golang.org/x/mod v0.22.0 // indirect
-	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 	golang.org/x/text v0.21.0 // indirect

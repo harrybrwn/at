@@ -202,8 +202,9 @@ func (g *Generator) NewGenerator(sch *lex.Schema) (*FileGenerator, error) {
 		switch def.Type {
 		case lex.TypeString:
 			if def.Format == lex.FmtCID {
-				addImport(imps,
-					"github.com/ipfs/go-cid")
+				// addImport(imps,
+				// 	"github.com/ipfs/go-cid")
+				addImport(imps, "github.com/harrybrwn/at/internal/cid")
 			}
 		case lex.TypeBlob, lex.TypeBytes:
 			// TODO blobs will most likely need a special import
@@ -211,7 +212,9 @@ func (g *Generator) NewGenerator(sch *lex.Schema) (*FileGenerator, error) {
 		case lex.TypeCIDLink:
 			addImport(imps,
 				"github.com/bluesky-social/indigo/lex/util",
-				"github.com/ipfs/go-cid")
+				// "github.com/ipfs/go-cid",
+				"github.com/harrybrwn/at/internal/cid",
+			)
 		case lex.TypeQuery, lex.TypeProcedure, lex.TypeSubscription:
 			// needed by genRPC
 			addImport(
@@ -420,17 +423,27 @@ type %[2]sClient struct {
 			if def.Parameters != nil {
 				p(`	err = params.toQuery(q)
 	if err != nil {
-		return nil, err
+		// TODO WithStack should be used in toQuery
+		return nil, errors.WithStack(err)
 	}` + "\n")
 			}
 
 			switch def.Type {
 			case lex.TypeQuery:
-				p(`	resbody, err := c.c.Query(ctx, %[1]q, q)
+				var ct string
+				if pair.K.Out != nil {
+					ct = pair.K.Out.Encoding
+				}
+				p(`	resbody, err := c.c.Query(ctx, &xrpc.Request{
+		Type:        xrpc.Query,
+		NSID:        %[1]q,
+		Params:      q,
+		ContentType: %[2]q,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer resbody.Close()`+"\n", pair.K.Schema.ID)
+	defer resbody.Close()`+"\n", pair.K.Schema.ID, ct)
 				if def.Output == nil {
 					p("\treturn nil, nil\n")
 					p("}\n\n")
@@ -441,7 +454,7 @@ type %[2]sClient struct {
 					p("\tvar response %[1]sResponse\n", name)
 					p(`	err = json.NewDecoder(resbody).Decode(&response)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return &response, nil
 }` + "\n\n")
@@ -454,25 +467,44 @@ type %[2]sClient struct {
 
 			case lex.TypeProcedure:
 				if def.Input != nil {
+					p("\tconst contentType = %q\n", def.Input.Encoding)
 					switch def.Input.Encoding {
 					case lex.EncodingJSON:
 						p(`	var reqBody bytes.Buffer
 	err = json.NewEncoder(&reqBody).Encode(input)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}` + "\n")
 					case lex.EncodingMP4, lex.EncodingANY, lex.EncodingCAR:
 						p(`	var reqBody bytes.Buffer
 	_, err = io.Copy(&reqBody, body)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}` + "\n")
 					default:
-						p(`	resbody, err := c.c.Procedure(ctx, %[1]q, q, nil)`+"\n", pair.K.Schema.ID)
+						p(`	resbody, err := c.c.Procedure(ctx, &xrpc.Request{
+		Type:        xrpc.Procedure,
+		ContentType: contentType,
+		NSID:        %[1]q,
+		Params:      q,
+		Body:        nil,
+	})`+"\n", pair.K.Schema.ID)
 					}
-					p(`	resbody, err := c.c.Procedure(ctx, %[1]q, q, &reqBody)`+"\n", pair.K.Schema.ID)
+					p(`	resbody, err := c.c.Procedure(ctx, &xrpc.Request{
+		Type:        xrpc.Procedure,
+		ContentType: contentType,
+		NSID:        %[1]q,
+		Params:      q,
+		Body:        &reqBody,
+	})`+"\n", pair.K.Schema.ID)
 				} else {
-					p(`	resbody, err := c.c.Procedure(ctx, %[1]q, q, nil)`+"\n", pair.K.Schema.ID)
+					p(`	resbody, err := c.c.Procedure(ctx, &xrpc.Request{
+		Type:        xrpc.Procedure,
+		ContentType: "",
+		NSID:        %[1]q,
+		Params:      q,
+		Body:        nil,
+	})`+"\n", pair.K.Schema.ID)
 				}
 				p(`	if err != nil {
 		return nil, err
@@ -488,7 +520,7 @@ type %[2]sClient struct {
 					p("\tvar response %[1]sResponse\n", name)
 					p(`	err = json.NewDecoder(resbody).Decode(&response)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return &response, nil
 }` + "\n\n")

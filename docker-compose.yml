@@ -11,6 +11,29 @@ services:
       # - ./db:/app
     ports: ["5432:5432"]
 
+  pds:
+    image: harrybrwn/pds:latest
+    ports: ["3000:3000"]
+    working_dir: /app
+    environment:
+      PDS_DEV_MODE: 'true'
+      PDS_DATA_DIRECTORY: /opt/pds
+      PDS_BLOBSTORE_DISK_LOCATION: /opt/pds/blobstore
+      PDS_ADMIN_PASSWORD: testlab
+      PDS_SERVICE_DID: "did:plc:nsu4iq7726acidyqpha2zuk3"
+      PDS_JWT_SECRET: 42d9b4eb1114083e1f5c79f7b42015a7
+      PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX: 3b2211ec8dbd899f3c53be5c7ffec1648cc01f9a098a48c2937a137f3f9a3b91
+      PDS_PORT: '3000'
+      PDS_HOSTNAME: 'localhost'
+    volumes:
+      - pds:/opt/pds
+
+  pdsadmin:
+    image: harrybrwn/pdsadmin:latest
+    environment:
+      PDS_ADMIN_PASSWORD: testlab
+      PDS_HOSTNAME: pds:3000
+
   # for debugging
   pdsls:
     image: harrybrwn/pdsls:latest
@@ -18,3 +41,4 @@ services:
 
 volumes:
   database:
+  pds:

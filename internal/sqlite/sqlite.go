@@ -25,6 +25,19 @@ func Open(location string, config *Config) (*sql.DB, error) {
 	return open(&uri, config)
 }
 
+func OpenURI(uri *url.URL, opts ...Option) (*sql.DB, error) {
+	var config Config
+	for _, o := range opts {
+		o(&config)
+	}
+	query, err := config.query()
+	if err != nil {
+		return nil, err
+	}
+	uri.RawQuery = query.Encode()
+	return open(uri, &config)
+}
+
 func File(location string, opts ...Option) (*sql.DB, error) {
 	var config Config
 	for _, o := range opts {

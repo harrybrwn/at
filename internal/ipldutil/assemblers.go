@@ -37,8 +37,20 @@ func (a *simpleValueAssembler) ptrGuard() reflect.Value {
 
 func (a *simpleValueAssembler) BeginMap(sizeHint int64) (datamodel.MapAssembler, error) {
 	v := a.ptrGuard()
-	ma := valueStructAssembler{v: v}
-	return &ma, ma.build()
+	switch v.Kind() {
+	case reflect.Map:
+		return &mapAssembler{
+			v: v,
+			m: make(map[string]reflect.Value),
+		}, nil
+	case reflect.Interface:
+		return newEmptyMapAssembler(), nil
+	case reflect.Struct:
+		ma := valueStructAssembler{v: v}
+		return &ma, ma.build()
+	default:
+		return nil, errors.Errorf("cannot assemble map with kind %v", v.Kind())
+	}
 }
 
 func (a *simpleValueAssembler) BeginList(sizeHint int64) (datamodel.ListAssembler, error) {
@@ -60,7 +72,7 @@ func (a *simpleValueAssembler) AssignBool(b bool) error {
 	case reflect.Bool:
 		a.v.Set(reflect.ValueOf(b))
 	default:
-		return ErrWrongType
+		return errors.Wrapf(ErrWrongType, "could not assign bool")
 	}
 	return nil
 }
@@ -88,6 +100,9 @@ func (a *simpleValueAssembler) AssignInt(i int64) error {
 		v.Set(reflect.ValueOf(uint32(i)))
 	case reflect.Uint64:
 		v.Set(reflect.ValueOf(uint64(i)))
+	case reflect.Interface:
+		// underlying type is any
+		v.Set(reflect.ValueOf(i))
 	default:
 		return errors.Wrapf(ErrWrongType, "type %q is not an int", a.v.Kind())
 	}
@@ -102,7 +117,7 @@ func (a *simpleValueAssembler) AssignFloat(f float64) error {
 	case reflect.Float64:
 		v.Set(reflect.ValueOf(f))
 	default:
-		return ErrWrongType
+		return errors.Wrapf(ErrWrongType, "could not assign float")
 	}
 	return nil
 }
@@ -112,8 +127,11 @@ func (a *simpleValueAssembler) AssignString(s string) error {
 		a.v.Set(reflect.ValueOf(&s))
 		return nil
 	}
-	if a.v.Kind() != reflect.String {
-		return errors.Wrapf(ErrWrongType, "expected type to be %q", a.v.Kind())
+	if a.v.Kind() == reflect.Interface && a.v.CanAddr() {
+		a.v.Set(reflect.ValueOf((any)(s)))
+		return nil
+	} else if a.v.Kind() != reflect.String {
+		return errors.Wrapf(ErrWrongType, "expected type to be %q not %q", reflect.String, a.v.Kind())
 	}
 	a.v.Set(reflect.ValueOf(s))
 	return nil
@@ -124,7 +142,7 @@ func (a *simpleValueAssembler) AssignBytes(b []byte) error {
 	switch v.Kind() {
 	case reflect.Array:
 		if v.Type().Elem().Kind() != reflect.Uint8 {
-			return ErrWrongType
+			return errors.Wrapf(ErrWrongType, "could not assign bytes to array")
 		}
 		if len(b) > v.Len() {
 			return errors.Errorf("cannot assign % bytes to [%d]byte", len(b), v.Len())
@@ -135,17 +153,25 @@ func (a *simpleValueAssembler) AssignBytes(b []byte) error {
 		return nil
 	case reflect.Slice:
 		if v.Type().Elem().Kind() != reflect.Uint8 {
-			return ErrWrongType
+			return errors.Wrapf(ErrWrongType, "could not assign bytes to slice")
 		}
 		v.Set(reflect.ValueOf(b))
 		return nil
 	default:
-		return ErrWrongType
+		return errors.Wrapf(ErrWrongType, "could not assign bytes to unknown type %v", v.Kind())
 	}
 }
 
 func (a *simpleValueAssembler) AssignLink(l datamodel.Link) error {
 	v := a.ptrGuard()
+	if !v.IsValid() {
+		cid, err := cid.Cast([]byte(l.Binary()))
+		if err != nil {
+			return err
+		}
+		a.v = reflect.ValueOf(cid)
+		return nil
+	}
 	switch v.Type() {
 	case goTypeCid:
 		cid, err := cid.Cast([]byte(l.Binary()))
@@ -169,7 +195,15 @@ func (a *simpleValueAssembler) AssignLink(l datamodel.Link) error {
 		v.Set(reflect.ValueOf(cid))
 		return nil
 	default:
-		return ErrWrongType
+		if v.Kind() == reflect.Interface && v.IsNil() && v.CanSet() {
+			cid, err := cid.Cast([]byte(l.Binary()))
+			if err != nil {
+				return err
+			}
+			v.Set(reflect.ValueOf(cid))
+			return nil
+		}
+		return errors.Wrapf(ErrWrongType, "could not assign link to type %v", v.Type())
 	}
 }
 
@@ -285,7 +319,12 @@ type field struct {
 func (a *valueStructAssembler) build() error {
 	a.fields = make(map[string]field)
 	typ := a.v.Type()
-	n := a.v.NumField()
+	var n int
+	if a.v.Kind() == reflect.Map {
+		n = a.v.Len()
+	} else {
+		n = a.v.NumField()
+	}
 	for i := 0; i < n; i++ {
 		sf := typ.Field(i)
 		v := a.v.Field(i)
@@ -401,7 +440,12 @@ type listAssembler struct {
 }
 
 func (a *listAssembler) AssembleValue() datamodel.NodeAssembler {
-	v := reflect.New(a.dst.Type().Elem()).Elem()
+	var v reflect.Value
+	if a.dst.Kind() == reflect.Interface {
+		v = reflect.New(a.dst.Type()).Elem()
+	} else {
+		v = reflect.New(a.dst.Type().Elem()).Elem()
+	}
 	// v will act like a pointer, so it's inner value will be changed later on
 	// by the simpleValueAssembler that we return which will also alter the
 	// value stored in the listAssembler's values slice.
@@ -410,8 +454,12 @@ func (a *listAssembler) AssembleValue() datamodel.NodeAssembler {
 }
 
 func (a *listAssembler) Finish() error {
+	tp := a.dst.Type()
+	if a.dst.Kind() == reflect.Interface {
+		tp = reflect.TypeOf(([]any)(nil))
+	}
 	slice := reflect.MakeSlice(
-		a.dst.Type(),
+		tp,
 		len(a.values),
 		len(a.values),
 	)
@@ -424,6 +472,122 @@ func (a *listAssembler) Finish() error {
 
 func (a *listAssembler) ValuePrototype(idx int64) datamodel.NodePrototype {
 	return basicnode.Prototype.List
+}
+
+type mapAssembler struct {
+	v reflect.Value
+	m map[string]reflect.Value
+}
+
+// shortcut combining AssembleKey and AssembleValue into one step; valid when the key is a string kind.
+func (a *mapAssembler) AssembleEntry(k string) (datamodel.NodeAssembler, error) {
+	v := reflect.New(a.v.Type().Elem())
+	a.m[k] = v
+	return &anyAssembler{
+		simpleValueAssembler: &simpleValueAssembler{
+			v.Elem(),
+		},
+	}, nil
+}
+
+func (a *mapAssembler) Finish() error {
+	for k, v := range a.m {
+		a.v.SetMapIndex(reflect.ValueOf(k), v.Elem())
+	}
+	return nil
+}
+
+func (a *mapAssembler) KeyPrototype() datamodel.NodePrototype {
+	// dag-cbor says all keys should be strings
+	return basicnode.Prototype.String
+}
+
+func (a *mapAssembler) ValuePrototype(k string) datamodel.NodePrototype {
+	v := a.v.MapIndex(reflect.ValueOf(k))
+	// TODO this is probably wrong and will cause problems called
+	return nodePrototypeFromKind(v)
+}
+
+// must be followed by call to AssembleValue.
+func (a *mapAssembler) AssembleKey() datamodel.NodeAssembler {
+	panic("help I don't know how to implement AssembleKey")
+}
+
+// must be called immediately after AssembleKey.
+func (a *mapAssembler) AssembleValue() datamodel.NodeAssembler {
+	panic("help I don't know how to implement AssembleValue")
+}
+
+type anyAssembler struct {
+	*simpleValueAssembler
+}
+
+func newEmptyMapAssembler() *mapAssembler {
+	tp := reflect.TypeOf((map[string]any)(nil))
+	return &mapAssembler{
+		v: reflect.MakeMap(tp),
+		m: make(map[string]reflect.Value),
+	}
+}
+
+func (aa *anyAssembler) BeginMap(sizeHint int64) (datamodel.MapAssembler, error) {
+	tp := reflect.TypeOf((map[string]any)(nil))
+	v := reflect.MakeMap(tp)
+	aa.v.Set(v)
+	ma := mapAssembler{
+		v: v,
+		m: make(map[string]reflect.Value),
+	}
+	return &ma, nil
+}
+
+func (aa *anyAssembler) BeginList(sizeHint int64) (datamodel.ListAssembler, error) {
+	la := listAssembler{
+		dst:    aa.v,
+		values: make([]reflect.Value, 0, sizeHint),
+	}
+	return &la, nil
+}
+
+func (aa *anyAssembler) AssignString(s string) error {
+	if aa.v.IsValid() {
+		if aa.v.Kind() == reflect.Interface && aa.v.CanSet() {
+			aa.v.Set(reflect.ValueOf(s))
+			return nil
+		}
+		return aa.simpleValueAssembler.AssignString(s)
+	}
+	aa.v = reflect.ValueOf(s)
+	return nil
+}
+
+func (aa *anyAssembler) AssignBytes(b []byte) error {
+	if aa.v.IsValid() {
+		return aa.simpleValueAssembler.AssignBytes(b)
+	}
+	aa.v = reflect.ValueOf(b)
+	return nil
+}
+
+func (aa *anyAssembler) AssignLik(l datamodel.Link) error {
+	if aa.v.IsValid() {
+		return aa.simpleValueAssembler.AssignLink(l)
+	}
+	aa.v = reflect.ValueOf(cid.Cid{})
+	cid, err := cid.Cast([]byte(l.Binary()))
+	if err != nil {
+		return err
+	}
+	aa.v.Set(reflect.ValueOf(cid))
+	return nil
+}
+
+func (aa *anyAssembler) AssignInt(i int64) error {
+	if aa.v.IsValid() {
+		return aa.simpleValueAssembler.AssignInt(i)
+	}
+	aa.v = reflect.ValueOf(i)
+	return nil
 }
 
 func ptr[T any](v T) *T { return &v }

@@ -37,6 +37,8 @@ func MapStringers[Slice ~[]T, T fmt.Stringer](s Slice) []string {
 
 func ToAny[T any](v T) any { return v }
 
+func ToString[T fmt.Stringer](v T) string { return v.String() }
+
 func FilterMap[I, O any](in iter.Seq[I], fn func(*I) (O, bool)) iter.Seq[O] {
 	return func(yield func(O) bool) {
 		for item := range in {

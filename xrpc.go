@@ -15,12 +15,13 @@ import (
 
 	"github.com/bluesky-social/indigo/atproto/identity"
 	"github.com/bluesky-social/indigo/atproto/syntax"
-	"github.com/bluesky-social/indigo/xrpc"
+	"github.com/pkg/errors"
+
+	"github.com/harrybrwn/at/xrpc"
 )
 
 type XRPCClient struct {
 	pds        string
-	cache      *fileCache
 	AdminToken *string
 }
 
@@ -36,7 +37,7 @@ func (c *XRPCClient) url(path string, q url.Values) (*url.URL, error) {
 	return u, nil
 }
 
-func (c *XRPCClient) do(ctx context.Context, tp xrpc.XRPCRequestType, ns string, q url.Values) (*http.Response, error) {
+func (c *XRPCClient) do(ctx context.Context, tp xrpc.RequestType, ns string, q url.Values) (*http.Response, error) {
 	u, err := c.url("/xrpc/"+ns, q)
 	if err != nil {
 		return nil, err
@@ -65,7 +66,7 @@ func (c *XRPCClient) do(ctx context.Context, tp xrpc.XRPCRequestType, ns string,
 	return res, err
 }
 
-func (c *XRPCClient) dojson(ctx context.Context, tp xrpc.XRPCRequestType, ns string, q url.Values, dst any) error {
+func (c *XRPCClient) dojson(ctx context.Context, tp xrpc.RequestType, ns string, q url.Values, dst any) error {
 	res, err := c.do(ctx, tp, ns, q)
 	if err != nil {
 		return err
@@ -76,7 +77,6 @@ func (c *XRPCClient) dojson(ctx context.Context, tp xrpc.XRPCRequestType, ns str
 		_ = json.NewDecoder(res.Body).Decode(&e)
 		return &e
 	}
-	// return json.NewDecoder(io.TeeReader(res.Body, os.Stdout)).Decode(dst)
 	return json.NewDecoder(res.Body).Decode(dst)
 }
 
@@ -89,19 +89,16 @@ type Repo struct {
 }
 
 func (c *XRPCClient) Repo(ctx context.Context, repo syntax.DID) (*Repo, error) {
-	var r Repo
-	cachepath := c.cache.path("repos", repo)
-	err := c.cache.cached(&r, cachepath, 10*time.Minute, 0)
-	if err == nil {
-		return &r, nil
-	}
+	var (
+		err error
+		r   Repo
+	)
 	q := make(url.Values)
 	q.Set("repo", string(repo))
 	err = c.dojson(ctx, xrpc.Query, "com.atproto.repo.describeRepo", q, &r)
 	if err != nil {
 		return nil, err
 	}
-	c.cache.stash(cachepath, &r)
 	return &r, nil
 }
 
@@ -235,12 +232,7 @@ func (c *XRPCClient) Record(ctx context.Context, repo syntax.DID, collection syn
 }
 
 func (c *XRPCClient) record(ctx context.Context, dst any, repo syntax.DID, collection syntax.NSID, rkey syntax.RecordKey) error {
-	cachepath := c.cache.path("records", recordCacheKey(repo, collection, rkey))
-	err := c.cache.cached(dst, cachepath, time.Hour, 0)
-	if err == nil {
-		return nil
-	}
-	err = c.dojson(ctx, xrpc.Query, "com.atproto.repo.getRecord", url.Values{
+	err := c.dojson(ctx, xrpc.Query, "com.atproto.repo.getRecord", url.Values{
 		"repo":       []string{repo.String()},
 		"collection": []string{collection.String()},
 		"rkey":       []string{rkey.String()},
@@ -248,7 +240,6 @@ func (c *XRPCClient) record(ctx context.Context, dst any, repo syntax.DID, colle
 	if err != nil {
 		return err
 	}
-	c.cache.stash(cachepath, dst)
 	return nil
 }
 
@@ -280,7 +271,7 @@ func (c *XRPCClient) GetBlob(ctx context.Context, did syntax.DID, cid syntax.CID
 	}
 	defer res.Body.Close()
 	_, err = io.Copy(w, res.Body)
-	return err
+	return errors.WithStack(err)
 }
 
 func blobURL(pds string, did syntax.DID, cid syntax.CID) string {
@@ -301,11 +292,19 @@ func PlcHistory(did syntax.DID) ([]HistoryItem, error) {
 	)
 	res, err := HttpClient.Get(u)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		var e xrpc.ErrorResponse
+		err = json.NewDecoder(res.Body).Decode(&e)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		return nil, errors.WithStack(&e)
+	}
 	items := make([]HistoryItem, 0)
-	return items, json.NewDecoder(res.Body).Decode(&items)
+	return items, errors.WithStack(json.NewDecoder(res.Body).Decode(&items))
 }
 
 func PlcHistoryLast(did syntax.DID) (*HistoryOperation, error) {
@@ -316,11 +315,11 @@ func PlcHistoryLast(did syntax.DID) (*HistoryOperation, error) {
 	)
 	res, err := HttpClient.Get(u)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	defer res.Body.Close()
 	var op HistoryOperation
-	return &op, json.NewDecoder(res.Body).Decode(&op)
+	return &op, errors.WithStack(json.NewDecoder(res.Body).Decode(&op))
 }
 
 type HistoryItem struct {

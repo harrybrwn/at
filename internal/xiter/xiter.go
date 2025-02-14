@@ -24,6 +24,14 @@ type Pair[K, V any] struct {
 	V V
 }
 
+func Pairs[K, V any](seq iter.Seq2[K, V]) iter.Seq[Pair[K, V]] {
+	return func(yield func(Pair[K, V]) bool) {
+		seq(func(k K, v V) bool {
+			return yield(Pair[K, V]{K: k, V: v})
+		})
+	}
+}
+
 type Group[K, V any] struct {
 	Key   string
 	Pairs []Pair[K, V]
@@ -177,4 +185,13 @@ func MapStringers[S ~[]T, T fmt.Stringer](s S) iter.Seq[string] {
 			}
 		}
 	}
+}
+
+func Contains[V comparable](seq iter.Seq[V], v V) bool {
+	for item := range seq {
+		if item == v {
+			return true
+		}
+	}
+	return false
 }

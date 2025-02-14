@@ -77,18 +77,22 @@ func (s *SQLRepoReader) GetRoot(ctx context.Context) (cid.Cid, error) {
 }
 
 func (s *SQLRepoReader) GetRootDetailed(ctx context.Context) (*repo.RootInfo, error) {
-	var root repo.RootInfo
+	var (
+		root repo.RootInfo
+		cid  StoredCid
+	)
 	rows, err := s.db.QueryContext(ctx, "SELECT cid, rev FROM repo_root LIMIT 1")
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	err = database.ScanOne(rows, &root.CID, &root.Rev)
+	err = database.ScanOne(rows, &cid, &root.Rev)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get root")
 	}
+	root.CID = cid.CID
 	return &root, nil
 }
 
@@ -127,7 +131,7 @@ func (s *SQLRepoReader) GetBlocks(ctx context.Context, cids []cid.Cid) (*repo.Bl
 		Missing: make([]cid.Cid, 0),
 	}
 
-	// Check cache first
+	// Check memory cache first then fetch the missing CIDs
 	cached, missing := s.cache.GetMany(cids)
 	for _, entry := range cached.Entries() {
 		result.Blocks.Set(entry.CID, entry.Bytes)
@@ -139,32 +143,53 @@ func (s *SQLRepoReader) GetBlocks(ctx context.Context, cids []cid.Cid) (*repo.Bl
 	// Fetch missing blocks from database
 	query := `SELECT cid, content FROM repo_block WHERE cid IN (?` +
 		strings.Repeat(",?", len(missing)-1) + ")"
-	args := array.Map(missing, array.ToAny)
+	args := array.Map(array.Map(missing, array.ToString), array.ToAny)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to query blocks")
 	}
 	defer rows.Close()
 
-	foundCids := make(map[cid.Cid]bool)
+	foundCids := make(map[cid.Cid]struct{})
 	for rows.Next() {
-		var cid cid.Cid
+		var cid StoredCid
 		var content []byte
 		if err := rows.Scan(&cid, &content); err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
-		result.Blocks.Set(cid, content)
-		s.cache.Set(cid, content)
-		foundCids[cid] = true
+		result.Blocks.Set(cid.CID, content)
+		s.cache.Set(cid.CID, content)
+		foundCids[cid.CID] = struct{}{}
 	}
 
 	// Identify missing blocks
 	for _, cid := range missing {
-		if !foundCids[cid] {
+		if _, found := foundCids[cid]; !found {
 			result.Missing = append(result.Missing, cid)
 		}
 	}
 	return result, nil
+}
+
+func (s *SQLRepoReader) ListAllBlocks(ctx context.Context) (*repo.BlockMap, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT cid, content FROM repo_block`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var (
+		m       = repo.NewBlockMap()
+		cid     StoredCid
+		content []byte
+	)
+	for rows.Next() {
+		err = rows.Scan(&cid, &content)
+		if err != nil {
+			return nil, err
+		}
+		m.Set(cid.CID, content)
+	}
+	return m, nil
 }
 
 // SQLRepoTransactor extends SQLRepoReader with write operations
@@ -187,7 +212,7 @@ func (s *SQLRepoTransactor) CacheRev(ctx context.Context, rev string) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT cid, content 
 		FROM repo_block 
-		WHERE repo_rev = ? 
+		WHERE repoRev = ? 
 		LIMIT 15`, rev)
 	if err != nil {
 		return errors.Wrap(err, "failed to query blocks for rev")
@@ -196,13 +221,13 @@ func (s *SQLRepoTransactor) CacheRev(ctx context.Context, rev string) error {
 
 	for rows.Next() {
 		var (
-			cid     cid.Cid
+			cid     StoredCid
 			content []byte
 		)
 		if err := rows.Scan(&cid, &content); err != nil {
 			return errors.Wrap(err, "failed to scan row")
 		}
-		s.cache.Set(cid, content)
+		s.cache.Set(cid.CID, content)
 	}
 	return errors.WithStack(rows.Err())
 }
@@ -325,6 +350,3 @@ func (sc *StoredCid) Scan(value any) (err error) {
 func (sc *StoredCid) Value() (driver.Value, error) {
 	return sc.CID.String(), nil
 }
-
-var _ sql.Scanner
-var _ sql.NullString

@@ -9,7 +9,6 @@ import (
 
 	"github.com/bluesky-social/indigo/atproto/crypto"
 	"github.com/bluesky-social/indigo/atproto/syntax"
-	indigorepo "github.com/bluesky-social/indigo/repo"
 	"github.com/harrybrwn/db"
 	"github.com/huandu/go-sqlbuilder"
 	"github.com/ipfs/go-cid"
@@ -44,6 +43,7 @@ type RepoTransactor struct {
 	record          *RecordTransactor
 	storage         *SQLRepoTransactor
 	now             string
+	log             *slog.Logger
 }
 
 // NewRepoTransactor creates a new repository transactor
@@ -70,6 +70,7 @@ func NewRepoTransactor(
 		storage:         NewSQLRepoTransactor(db, did, signingKey),
 		backgroundQueue: backgroundQueue,
 		now:             now,
+		log:             slog.Default().With("component", "actorstore.RepoTransactor"),
 	}
 }
 
@@ -139,6 +140,7 @@ func (t *RepoTransactor) FormatCommit(
 	writes []repo.PreparedWrite,
 	swapCommit cid.Cid,
 ) (*repo.CommitData, error) {
+	t.log.Debug("FormatCommit", "writes", fmt.Sprintf("%p", writes), "swapCommit", swapCommit.String())
 	currRoot, err := t.storage.GetRootDetailed(ctx)
 	if err != nil {
 		return nil, err
@@ -146,7 +148,7 @@ func (t *RepoTransactor) FormatCommit(
 	if currRoot == nil {
 		return nil, xrpc.NewInvalidRequest("No repo root found for %q", t.did)
 	}
-	if swapCommit.ByteLen() != 0 && currRoot.CID != swapCommit {
+	if swapCommit.ByteLen() != 0 && !currRoot.CID.Equals(swapCommit) {
 		return nil, repo.ErrBadCommitSwap
 	}
 	// Cache last commit
@@ -154,9 +156,18 @@ func (t *RepoTransactor) FormatCommit(
 		return nil, err
 	}
 
+	writeOps := make([]repo.RecordWriteOp, len(writes))
 	newRecordCIDs := make([]cid.Cid, 0)
 	delAndUpdateURIs := make([]syntax.ATURI, 0)
-	for _, write := range writes {
+	for i, write := range writes {
+		uri := write.GetURI()
+		writeOps[i] = repo.RecordWriteOp{
+			Action:     write.GetAction(),
+			Collection: string(uri.Collection()),
+			RecordKey:  string(uri.RecordKey()),
+			Record:     write.GetRecord(),
+		}
+
 		action := write.GetAction()
 		if action != repo.WriteOpActionDelete {
 			newRecordCIDs = append(newRecordCIDs, cid.MustParse(write.GetCID()))
@@ -168,6 +179,7 @@ func (t *RepoTransactor) FormatCommit(
 			continue
 		}
 
+		// Do swap
 		record, err := t.record.GetRecord(ctx, write.GetURI(), nil, true)
 		if err != nil {
 			return nil, err
@@ -191,53 +203,15 @@ func (t *RepoTransactor) FormatCommit(
 		}
 	}
 
-	currRootCid, err := cid.Parse(currRoot.CID.String())
-	if err != nil {
-		return nil, err
-	}
-	blockstore := blockstore.NewSQLStore(t.db, "")
-	repository, err := indigorepo.OpenRepo(ctx, blockstore, currRootCid)
+	blockstore := blockstore.NewSQLStore(t.db, currRoot.Rev)
+	repository, err := repo.Load(ctx, blockstore, currRoot.CID, t.sign)
 	if err != nil {
 		return nil, err
 	}
 
-	// repo, err := LoadRepo(ctx, t.storage, currRoot.CID)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	writeOps := make([]repo.RecordWriteOp, len(writes))
-	for i, w := range writes {
-		uri := w.GetURI()
-		writeOps[i] = repo.RecordWriteOp{
-			Action:     w.GetAction(),
-			Collection: string(uri.Collection()),
-			RecordKey:  string(uri.RecordKey()),
-			Record:     w.GetRecord(),
-		}
-	}
-
-	// commit, err := repository.FormatCommit(ctx, writeOps, t.key)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	commitCid, rev, err := repository.Commit(ctx, t.sign)
+	commitData, err := repository.FormatCommit(ctx, writeOps)
 	if err != nil {
 		return nil, err
-	}
-	blockstore.SetRev(rev)
-	sc := repository.SignedCommit()
-	commitData := repo.CommitData{
-		CID:            commitCid,
-		Rev:            rev,
-		Prev:           cid.Undef,
-		NewBlocks:      repo.NewBlockMap(),
-		RelevantBlocks: repo.NewBlockMap(),
-		// RemovedCIDs:    repo.NewCIDSet(nil),
-		RemovedCIDs: cid.NewSet(),
-	}
-	if sc.Prev != nil {
-		commitData.Prev = *sc.Prev
 	}
 
 	// Find duplicate record CIDs
@@ -259,7 +233,7 @@ func (t *RepoTransactor) FormatCommit(
 		}
 		commitData.RelevantBlocks.AddMap(missingBlocks.Blocks)
 	}
-	return &commitData, nil
+	return commitData, nil
 }
 
 func (t *RepoTransactor) sign(_ context.Context, did string, b []byte) ([]byte, error) {

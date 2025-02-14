@@ -12,7 +12,7 @@ func NewRequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			ctx := r.Context()
 			args := make([]any, 0, 2)
 			args = append(args,
-				headerGroup(r),
+				headerGroup(r.Header),
 				slog.String("method", r.Method),
 				slog.String("uri", r.RequestURI),
 				slog.String("host", r.Host),
@@ -43,9 +43,12 @@ func (sw *StatusWriter) Header() http.Header { return sw.w.Header() }
 
 func (sw *StatusWriter) Write(b []byte) (int, error) { return sw.w.Write(b) }
 
-func headerGroup(r *http.Request) slog.Attr {
-	args := make([]any, 0, len(r.Header))
-	for k, v := range r.Header {
+func headerGroup(header http.Header) slog.Attr {
+	args := make([]any, 0, len(header))
+	for k, v := range header {
+		if strings.ToLower(k) == "authorization" {
+			continue
+		}
 		args = append(args, slog.String(k, strings.Join(v, ",")))
 	}
 	return slog.Group("headers", args...)

@@ -42,6 +42,20 @@ func NewSQLStore(db db.DB, rev string) *SQLBlockstore {
 	}
 }
 
+func (b *SQLBlockstore) Migrate(ctx context.Context) error {
+	_, err := b.db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS "repo_block" (
+  "cid" varchar primary key,
+  "repoRev" varchar not null,
+  "size" integer not null,
+  "content" blob not null
+);
+
+CREATE INDEX IF NOT EXISTS "repo_block_repo_rev_idx" on "repo_block" ("repoRev", "cid");
+`)
+	return err
+}
+
 func NewBatching(db db.DB, rev string) *batching {
 	return &batching{db: db, rev: rev}
 }

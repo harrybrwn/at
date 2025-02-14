@@ -1,4 +1,4 @@
-/testdata/
+/testdata/[0-9]*/
 /vendor/
 /misc/
 /api/
@@ -13,5 +13,7 @@
 /lex/gen.go
 /lex/gen_test.go
 *.txt
+*.log
 .sqlfluff
 .env
+

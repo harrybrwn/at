@@ -7,6 +7,7 @@ import (
 	"github.com/bluesky-social/indigo/atproto/identity"
 	"github.com/bluesky-social/indigo/atproto/syntax"
 	"github.com/bluesky-social/indigo/did"
+	"github.com/pkg/errors"
 
 	"github.com/harrybrwn/at/atp"
 )
@@ -38,43 +39,62 @@ func (d *Directory) LookupHandle(ctx context.Context, h syntax.Handle) (*identit
 		return nil, err
 	}
 	_ = did
-	return nil, nil
+	return d.LookupDID(ctx, did)
 }
 
 func (d *Directory) LookupDID(ctx context.Context, did syntax.DID) (*identity.Identity, error) {
-	cache, err := d.cache.CachedDoc(ctx, did.String())
-	if err == nil && cache != nil {
+	didstr := did.String()
+	cache, err := d.cache.CachedDoc(ctx, didstr)
+	if err == nil && !cache.Expired {
 		ident := identity.ParseIdentity(atp.ConvertDidDoc(&cache.Doc))
 		return &ident, nil
 	}
-	res, err := d.dir.LookupDID(ctx, did)
+	doc, err := d.resolver.GetDocument(ctx, didstr)
 	if err != nil {
 		return nil, err
 	}
-	return res, nil
+	ident := identity.ParseIdentity(atp.ConvertDidDoc(doc))
+	err = d.cache.CacheDoc(ctx, didstr, doc, nil)
+	return &ident, err
 }
 
 func (d *Directory) Lookup(ctx context.Context, i syntax.AtIdentifier) (*identity.Identity, error) {
-	return nil, nil
+	if i.IsDID() {
+		did, err := i.AsDID()
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		return d.LookupDID(ctx, did)
+	} else if i.IsHandle() {
+		handle, err := i.AsHandle()
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		return d.LookupHandle(ctx, handle)
+	}
+	return nil, errors.Errorf("invalid AT Identifier: %#v", i)
 }
 
 // Flushes any cache of the indicated identifier. If directory is not using caching, can ignore this.
 func (d *Directory) Purge(ctx context.Context, i syntax.AtIdentifier) error {
 	if i.IsHandle() {
-		// GET DID
 		handle, err := i.AsHandle()
 		if err != nil {
 			return err
 		}
-		did, err := d.handles.ResolveHandle(ctx, handle.String())
-		if err != nil {
-			return err
+		// If the DID is cached then delete it
+		didresult, err := d.cache.GetDID(ctx, handle.String())
+		if err == nil {
+			err = d.cache.ClearEntry(ctx, didresult.DID)
+			if err != nil {
+				return err
+			}
 		}
 		err = d.cache.ClearHandle(ctx, handle.String())
 		if err != nil {
 			return err
 		}
-		return d.cache.ClearEntry(ctx, did.String())
+		return nil
 	} else if i.IsDID() {
 		did, err := i.AsDID()
 		if err != nil {
@@ -103,15 +123,8 @@ func (r *Resolver) FlushCacheFor(didstr string) {
 
 func (r *Resolver) GetDocument(ctx context.Context, didstr string) (*did.Document, error) {
 	cached, err := r.cache.CachedDoc(ctx, didstr)
-	if err == nil {
-		if !cached.Expired {
-			return &cached.Doc, nil
-		}
-		err = r.cache.ClearEntry(ctx, didstr)
-		if err != nil {
-			slog.Error("failed to clear cache for did doc",
-				"did", didstr)
-		}
+	if err == nil && !cached.Expired {
+		return &cached.Doc, nil
 	}
 	doc, err := r.resolver.GetDocument(ctx, didstr)
 	if err != nil {
@@ -134,15 +147,8 @@ func NewHandleResolver(resolver atp.HandleResolver, cache *DIDCache) *HandleReso
 
 func (hr *HandleResolver) ResolveHandle(ctx context.Context, handle string) (syntax.DID, error) {
 	cached, err := hr.cache.GetDID(ctx, handle)
-	if err == nil {
-		if !cached.Expired {
-			return syntax.ParseDID(cached.DID)
-		}
-		err = hr.cache.ClearHandle(ctx, handle)
-		if err != nil {
-			slog.Error("failed to clear cache for handle",
-				"handle", handle)
-		}
+	if err == nil && !cached.Expired {
+		return syntax.ParseDID(cached.DID)
 	}
 	res, err := hr.resolver.ResolveHandle(ctx, handle)
 	if err != nil {

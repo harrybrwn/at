@@ -11,6 +11,7 @@ import (
 	"github.com/bluesky-social/indigo/events"
 	"github.com/bluesky-social/indigo/plc"
 
+	appbsky "github.com/harrybrwn/at/api/app/bsky"
 	atpapi "github.com/harrybrwn/at/api/com/atproto"
 	"github.com/harrybrwn/at/atp"
 	"github.com/harrybrwn/at/internal/accountstore"
@@ -32,6 +33,7 @@ type PDS struct {
 	Events         *events.EventManager
 	Bus            sequencer.Bus[*Event]
 	plcRotationKey *crypto.PrivateKeyK256
+	pipethrough    *xrpc.Pipethrough
 }
 
 func New(
@@ -62,6 +64,7 @@ func New(
 	if err != nil {
 		return nil, err
 	}
+
 	pds := PDS{
 		logger:         logger,
 		cfg:            config,
@@ -70,6 +73,11 @@ func New(
 		Resolver:       &resolver,
 		Bus:            seq,
 		plcRotationKey: plcRotationKey,
+		pipethrough: &xrpc.Pipethrough{
+			Host:   config.BskyAppView.URLHost(),
+			Client: resolver.HttpClient,
+			Logger: logger,
+		},
 	}
 	if config.DevMode {
 		pds.PLC = &atp.FakePLC{Resolver: &resolver}
@@ -81,32 +89,40 @@ func New(
 }
 
 func (pds *PDS) Apply(srv *xrpc.Server, middleware ...func(http.Handler) http.Handler) {
-	adminOnly := auth.AdminOnly(&auth.Opts{
+	opts := auth.Opts{
 		Logger:        pds.logger,
 		JWTSecret:     []byte(pds.cfg.JwtSecret),
 		AdminPassword: pds.cfg.AdminPassword,
-	})
-	authRequired := auth.Required(&auth.Opts{
-		Logger:        pds.logger,
-		JWTSecret:     []byte(pds.cfg.JwtSecret),
-		AdminPassword: pds.cfg.AdminPassword,
-	})
+		Resolver:      pds.Resolver,
+	}
+	adminOnly := auth.AdminOnly(&opts)
+	authRequired := auth.Required(&opts)
+	refreshTokenRequired := auth.RefreshTokenOnly(&opts)
 	srv.With(adminOnly).AddRPCs(
 		atpapi.NewServerCreateInviteCodeHandler(pds),
 	)
+	serviceJwt := auth.ServiceJwt(&opts)
 	srv.With(authRequired).AddRPCs(
+		appbsky.NewActorGetProfileHandler(pds),
+		appbsky.NewNotificationListNotificationsHandler(pds),
 		atpapi.NewRepoApplyWritesHandler(pds),
 		atpapi.NewRepoCreateRecordHandler(pds),
 		atpapi.NewRepoDeleteRecordHandler(pds),
+		atpapi.NewRepoListMissingBlobsHandler(pds),
 		atpapi.NewRepoPutRecordHandler(pds),
 		atpapi.NewRepoUploadBlobHandler(pds),
+	)
+	srv.With(serviceJwt).AddRPCs(
 		atpapi.NewServerCreateAccountHandler(pds),
+	)
+	srv.AddHandler(
+		xrpc.NewMethod("app.bsky.actor.getProfile", xrpc.Query),
+		pds.pipethrough,
 	)
 	srv.AddHandlers(
 		atpapi.NewRepoDescribeRepoHandler(pds),
 		atpapi.NewRepoGetRecordHandler(pds),
 		atpapi.NewRepoImportRepoHandler(pds),
-		atpapi.NewRepoListMissingBlobsHandler(pds),
 		atpapi.NewRepoListRecordsHandler(pds),
 		// atpapi.NewServerConfirmEmailHandler(pds),
 		atpapi.NewServerCreateSessionHandler(pds),
@@ -114,8 +130,10 @@ func (pds *PDS) Apply(srv *xrpc.Server, middleware ...func(http.Handler) http.Ha
 		// atpapi.NewServerDeleteSessionHandler(pds),
 		atpapi.NewServerDescribeServerHandler(pds),
 		// atpapi.NewServerGetSessionHandler(pds),
-		// atpapi.NewServerRefreshSessionHandler(pds),
 		// atpapi.NewServerUpdateEmailHandler(pds),
+	)
+	srv.With(refreshTokenRequired).AddHandlers(
+		atpapi.NewServerRefreshSessionHandler(pds),
 	)
 }
 

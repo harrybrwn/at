@@ -18,6 +18,7 @@ import (
 
 	comatp "github.com/harrybrwn/at/api/com/atproto"
 	"github.com/harrybrwn/at/internal/cbor/dagcbor"
+	atcid "github.com/harrybrwn/at/internal/cid"
 	"github.com/harrybrwn/at/internal/parallel"
 	"github.com/harrybrwn/at/internal/repo"
 )
@@ -84,10 +85,44 @@ func (rr *RecordReader) GetRecord(ctx context.Context, uri syntax.ATURI, cid *ci
 	value := make(map[string]any)
 	err = dagcbor.Unmarshal(content, &value)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		res.Value = value
+		return &res, err
 	}
 	res.Value = value
 	return &res, err
+}
+
+func (rr *RecordReader) GetByRev(ctx context.Context, rev string) (*Record, error) {
+	rows, err := rr.db.QueryContext(ctx, `
+		SELECT rb.cid, r.uri, rb.content, r.collection, r.rkey, r.repoRev, r.takedownRef
+		FROM repo_block rb
+		INNER JOIN record r ON r.cid = rb.cid
+		WHERE rb.repoRev = ?`, rev)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	var (
+		cid     StoredCid
+		content []byte
+		res     Record
+	)
+	err = db.ScanOne(
+		rows,
+		&cid, &res.URI, &content,
+		&res.Collection, &res.Rkey, &res.RepoRev,
+		&res.TakedownRef,
+	)
+	if err != nil {
+		return nil, err
+	}
+	res.CID = cid.CID
+	value := make(map[string]any)
+	err = dagcbor.Unmarshal(content, &value)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	res.Value = value
+	return &res, nil
 }
 
 func (rr *RecordReader) ListCollections(ctx context.Context) (iter.Seq2[string, error], error) {
@@ -185,13 +220,15 @@ func (rr *RecordReader) ListForCollection(
 	records := make([]comatp.RepoListRecordsRecord, 0)
 	for rows.Next() {
 		var (
+			c       StoredCid
 			r       comatp.RepoListRecordsRecord
 			content []byte
 		)
-		err := rows.Scan(&r.URI, &r.CID, &content)
+		err := rows.Scan(&r.URI, &c, &content)
 		if err != nil {
 			return nil, err
 		}
+		r.CID = atcid.Cid(c.CID)
 		value := make(map[string]any)
 		err = cbor.Unmarshal(content, &value)
 		if err != nil {
@@ -206,6 +243,38 @@ func (rr *RecordReader) ListForCollection(
 	return &comatp.RepoListRecordsResponse{
 		Records: records,
 	}, nil
+}
+
+func (rr *RecordReader) ListAll(ctx context.Context) ([]Record, error) {
+	rows, err := rr.db.QueryContext(ctx, `
+		SELECT r.cid, r.uri, r.collection, r.rkey, r.repoRev, r.takedownRef
+		FROM repo_block rb
+		INNER JOIN record r ON r.cid = rb.cid`)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	defer rows.Close()
+	var records = make([]Record, 0)
+	for rows.Next() {
+		var (
+			res     Record
+			cid     StoredCid
+			content []byte
+		)
+		err = rows.Scan(&cid, &res.URI, &content, &res.Collection, &res.Rkey, &res.RepoRev, &res.TakedownRef)
+		if err != nil {
+			return nil, err
+		}
+		res.CID = cid.CID
+		value := make(map[string]any)
+		err = dagcbor.Unmarshal(content, &value)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		res.Value = value
+		records = append(records, res)
+	}
+	return records, nil
 }
 
 type RecordBacklink struct {
@@ -240,11 +309,14 @@ func (rr *RecordReader) GetRecordBacklinks(ctx context.Context, collection synta
 	defer rows.Close()
 	var records []RecordBacklink
 	for rows.Next() {
-		var record RecordBacklink
+		var (
+			record RecordBacklink
+			cid    StoredCid
+		)
 		if err := rows.Scan(
 			&record.URI,
 			&record.Collection,
-			&record.CID,
+			&cid,
 			&record.RKey,
 			&record.RepoRev,
 			&record.IndexedAt,
@@ -252,6 +324,7 @@ func (rr *RecordReader) GetRecordBacklinks(ctx context.Context, collection synta
 		); err != nil {
 			return nil, err
 		}
+		record.CID = cid.CID.String()
 		records = append(records, record)
 	}
 	return records, rows.Err()
@@ -362,7 +435,7 @@ func (rt *RecordTransactor) IndexRecord(
 			repoRev = excluded.repoRev,
 			indexedAt = excluded.indexedAt`,
 		uri.String(),
-		cid,
+		&StoredCid{CID: cid},
 		uri.Collection().String(),
 		uri.RecordKey().String(),
 		repoRev,
@@ -396,8 +469,11 @@ func (rt *RecordTransactor) RemoveBacklinksByURI(ctx context.Context, uri syntax
 }
 
 func (rt *RecordTransactor) AddBacklinks(ctx context.Context, backlinks []Backlink) error {
-	qb := sqlbuilder.InsertInto("backlink").
-		Cols("uri", "path", "linkTo")
+	if len(backlinks) == 0 {
+		return nil
+	}
+	qb := sqlbuilder.SQLite.NewInsertBuilder()
+	qb.InsertInto("backlink").Cols("uri", "path", "linkTo")
 	for _, bl := range backlinks {
 		qb.Values(bl.URI, bl.Path, bl.LinkTo)
 	}

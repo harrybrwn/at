@@ -8,7 +8,6 @@ import (
 
 	"github.com/bluesky-social/indigo/atproto/crypto"
 	"github.com/bluesky-social/indigo/atproto/syntax"
-	"github.com/ipfs/go-cid"
 	"github.com/pkg/errors"
 
 	atpapi "github.com/harrybrwn/at/api/com/atproto"
@@ -16,6 +15,7 @@ import (
 	"github.com/harrybrwn/at/internal/accountstore"
 	"github.com/harrybrwn/at/internal/actorstore"
 	"github.com/harrybrwn/at/internal/auth"
+	"github.com/harrybrwn/at/internal/cid"
 	"github.com/harrybrwn/at/internal/parallel"
 	"github.com/harrybrwn/at/internal/repo"
 	"github.com/harrybrwn/at/internal/sequencer"
@@ -79,7 +79,6 @@ func (pds *PDS) CreateAccount(
 		pds.logger.Warn("repo transactor failed", "error", err)
 		return nil, err
 	}
-	_ = inputs
 	accessJwt, refreshJwt, err := pds.Accounts.CreateAccount(ctx, accountstore.CreateAccountOpts{
 		DID:         did.String(),
 		Handle:      inputs.handle.String(),
@@ -112,8 +111,8 @@ func (pds *PDS) CreateAccount(
 				// TODO commit events are more complicated than this
 				return pub.Pub(ctx, sequencer.NewEvent(&Event{SyncSubscribeReposCommit: &atpapi.SyncSubscribeReposCommit{
 					Repo:   did,
-					Commit: commit.CID,
-					Prev:   commit.Prev,
+					Commit: cid.Cid(commit.CID),
+					Prev:   cid.Cid(commit.Prev),
 					Rev:    commit.Rev,
 					Since:  commit.Since,
 					Blobs:  make([]cid.Cid, 0),
@@ -199,6 +198,32 @@ func (pds *PDS) CreateSession(
 }
 
 func (pds *PDS) RefreshSession(ctx context.Context) (*atpapi.ServerRefreshSessionResponse, error) {
+	user := auth.UserFromContext(ctx)
+	if user == nil {
+		return nil, xrpc.NewAuthRequired("Malformed token")
+	}
+	acct, err := pds.Accounts.GetAccount(ctx, user.DID, new(accountstore.GetAccountOpts).
+		WithDeactivated().
+		WithTakenDown())
+	if err != nil {
+		return nil, err
+	}
+	if acct.TakedownRef.Valid {
+		return nil, &xrpc.ErrorResponse{
+			Code:    "AccountTakedown",
+			Message: "Account has been taken down.",
+		}
+	}
+	err = parallel.Do(ctx,
+		func(ctx context.Context) error {
+			return nil
+		},
+		func(ctx context.Context) error {
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
 	return nil, xrpc.ErrNotImplemented
 }
 
@@ -356,7 +381,7 @@ func normalizeAndValidateHandle(ctx context.Context, pds *PDS, h syntax.Handle, 
 	return h, nil
 }
 
-func hasExplicitSlur(s string) bool {
+func hasExplicitSlur(string) bool {
 	return false
 }
 

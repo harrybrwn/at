@@ -1,68 +1,77 @@
 package main
 
 //go:generate go run ./cmd/lexgen -f -d ./lexicons/ -o ./api/
-//go:generate go run ./cmd/cborgen
+// go : generate go run ./cmd/cborgen
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/bluesky-social/indigo/atproto/crypto"
 	"github.com/bluesky-social/indigo/atproto/identity"
 	"github.com/bluesky-social/indigo/atproto/syntax"
-	"github.com/bluesky-social/indigo/xrpc"
-	"github.com/harrybrwn/xdg"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 
-	"github.com/harrybrwn/at/atp"
-	"github.com/harrybrwn/at/internal/pds"
+	"github.com/harrybrwn/at/api/com/atproto"
+	"github.com/harrybrwn/at/internal/auth"
+	"github.com/harrybrwn/at/internal/didcache"
+	"github.com/harrybrwn/at/internal/httpcache"
+	"github.com/harrybrwn/at/xrpc"
 )
 
 func main() {
 	root := NewRootCmd()
 	err := root.Execute()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %+v\n", err)
 		os.Exit(1)
 	}
 }
 
 func NewRootCmd() *cobra.Command {
 	var (
-		cacheDisabled bool
-		ctx           = newContext()
+		ctx         = newContext()
+		logLevelStr = "info"
+		debug       bool
 	)
 	c := cobra.Command{
 		Use:           "at [at://<resource>]",
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRun: func(*cobra.Command, []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) (err error) {
+			var lvl slog.Level
+			if err = lvl.UnmarshalText([]byte(logLevelStr)); err != nil {
+				return err
+			}
+			if debug {
+				lvl = slog.LevelDebug
+			}
+			l := slog.New(slog.NewJSONHandler(cmd.OutOrStdout(), &slog.HandlerOptions{
+				Level: lvl,
+			}))
+			slog.SetDefault(l)
+			ctx.logger = l
+			return ctx.init(cmd.Context())
+		},
+		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.cleanup()
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			if err := ctx.init(cmd.Context()); err != nil {
-				return err
-			}
-			cache := ctx.cache
-			if cacheDisabled {
-				slog.Info("cache is disabled")
-				ctx.dir.(*cacheDirectory).Disable()
-				cache.Disable()
-			}
 			for _, arg := range args {
-				err := view(ctx.WithCtx(cmd.Context()), arg, cache)
+				err := view(ctx.WithCtx(cmd.Context()), arg)
 				if err != nil {
 					return err
 				}
@@ -70,26 +79,31 @@ func NewRootCmd() *cobra.Command {
 			return nil
 		},
 	}
+
 	c.AddCommand(
 		NewDIDCmd(ctx),
 		newBlobCmd(ctx),
-		newCacheCmd(),
+		newCacheCmd(ctx),
 		newTestCmd(),
 		newLexCmd(),
 		newFireHoseCmd(),
 		newServerCmd(),
-		newResolveCmd(),
+		newResolveCmd(ctx),
+		newServiceJwtCmd(),
 	)
 	c.Flags().BoolVarP(&ctx.verbose, "verbose", "v", ctx.verbose, "verbose output")
-	c.Flags().BoolVarP(&ctx.history, "history", "H", ctx.history, "show did history")
+	c.Flags().BoolVarP(&ctx.history, "history", "H", ctx.history, "show did:plc history")
+	c.Flags().BoolVarP(&ctx.diddoc, "did-doc", "D", ctx.diddoc, "show did doc when calling describeRepo")
 	c.PersistentFlags().BoolVar(&ctx.purge, "purge", ctx.purge, "purge cache when before doing a resource lookup")
 	c.PersistentFlags().StringVar(&ctx.cursor, "cursor", "", "cursor for fetching lists")
 	c.PersistentFlags().IntVar(&ctx.limit, "limit", ctx.limit, "limit when fetching lists")
-	c.PersistentFlags().BoolVar(&cacheDisabled, "no-cache", false, "disable caching on disk")
+	c.PersistentFlags().BoolVar(&ctx.noCache, "no-cache", ctx.noCache, "disable caching")
+	c.PersistentFlags().StringVarP(&logLevelStr, "log-level", "l", logLevelStr, "set the log level (debug|info|warn|error)")
+	c.PersistentFlags().BoolVarP(&debug, "debug", "d", debug, "turn on debug mode")
 	return &c
 }
 
-func view(c *Context, arg string, cache *fileCache) error {
+func view(c *Context, arg string) error {
 	if !strings.HasPrefix(arg, "at://") {
 		arg = "at://" + arg
 	}
@@ -121,8 +135,12 @@ func view(c *Context, arg string, cache *fileCache) error {
 	default:
 		return errors.Wrap(err, "failed to lookup handle")
 	}
+	ident.Handle, err = ident.DeclaredHandle()
+	if err != nil {
+		return errors.Wrap(err, "failed to find handle from did doc alsoKnownAs")
+	}
 	did := ident.DID
-	client := XRPCClient{pds: ident.PDSEndpoint(), cache: cache}
+	client := XRPCClient{pds: ident.PDSEndpoint()}
 	if v, ok := os.LookupEnv("PDS_ADMIN_PASSWORD"); ok {
 		if c.verbose {
 			slog.Info("setting xrpc client admin token")
@@ -159,7 +177,12 @@ func view(c *Context, arg string, cache *fileCache) error {
 			fmt.Println()
 			fmt.Println("avatar:", blobURL(client.pds, did, cid))
 		default:
-			record, err := client.Record(c.ctx, did, collection, rkey)
+			cli := xrpc.NewClient(xrpc.WithEnv(), xrpc.WithURL(ident.PDSEndpoint()), xrpc.WithClient(HttpClient))
+			record, err := atproto.NewRepoClient(cli).GetRecord(c.ctx, &atproto.RepoGetRecordParams{
+				Repo:       &syntax.AtIdentifier{Inner: did},
+				Collection: collection,
+				RKey:       rkey.String(),
+			})
 			if err != nil {
 				return err
 			}
@@ -199,11 +222,13 @@ func view(c *Context, arg string, cache *fileCache) error {
 			}
 		}
 	} else {
-		handle := ident.Handle
 		fmt.Printf("did:      %s\n", did)
-		fmt.Printf("alias:    %s\n", handle)
+		fmt.Printf("alias:    %s\n", ident.Handle)
 		fmt.Printf("endpoint: %s\n", ident.PDSEndpoint())
-		repo, err := client.Repo(c.ctx, did)
+		cli := xrpc.NewClient(xrpc.WithEnv(), xrpc.WithURL(ident.PDSEndpoint()), xrpc.WithClient(HttpClient))
+		repo, err := atproto.NewRepoClient(cli).DescribeRepo(c.ctx, &atproto.RepoDescribeRepoParams{
+			Repo: &syntax.AtIdentifier{Inner: did},
+		})
 		if err != nil {
 			return err
 		}
@@ -233,21 +258,48 @@ func view(c *Context, arg string, cache *fileCache) error {
 				fmt.Printf("      services:      %+v\n", item.Operation.Services)
 			}
 		}
+		if c.diddoc {
+			indentedDidDoc, err := json.MarshalIndent(repo.DidDoc, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", indentedDidDoc)
+		}
 	}
 	return nil
 }
 
-func NewDIDCmd(ctx *Context) *cobra.Command {
+func NewDIDCmd(cx *Context) *cobra.Command {
 	c := cobra.Command{
 		Use:   "did",
 		Short: "Get a DID given a handle",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// did, err := ctx.resolveHandle(cmd.Context(), args[0])
-			// if err != nil {
-			// 	return err
-			// }
-			// cmd.Println(did)
+			ctx := cmd.Context()
+			if err := cx.init(ctx); err != nil {
+				return err
+			}
+			at, err := syntax.ParseAtIdentifier(args[0])
+			if err != nil {
+				return err
+			}
+			if at.IsDID() {
+				did, err := at.AsDID()
+				if err != nil {
+					return err
+				}
+				fmt.Println(did)
+				return nil
+			}
+			h, err := at.AsHandle()
+			if err != nil {
+				return err
+			}
+			did, err := cx.dir.LookupHandle(ctx, h)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\n", did.DID)
 			return nil
 		},
 	}
@@ -308,7 +360,7 @@ func newBlobCmd(ctx *Context) *cobra.Command {
 					fmt.Println(u)
 				}
 			} else {
-				client := XRPCClient{pds: ident.PDSEndpoint(), cache: ctx.cache}
+				client := XRPCClient{pds: ident.PDSEndpoint()}
 				blobs, err := client.ListBlobs(ctx.ctx, ident.DID, ctx.limit, ctx.cursor)
 				if err != nil {
 					return err
@@ -324,28 +376,15 @@ func newBlobCmd(ctx *Context) *cobra.Command {
 	return &c
 }
 
-func newResolveCmd() *cobra.Command {
-	var conf pds.EnvConfig
+func newResolveCmd(cx *Context) *cobra.Command {
 	c := cobra.Command{
 		Use:  "resolve",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			conf.InitDefaults()
-			conf.BlueskyDefaults()
-			resolver := atp.Resolver{HttpClient: http.DefaultClient}
-			resolver.HandleResolver, err = atp.NewDefaultHandleResolver()
-			if err != nil {
+			if err = cx.init(cmd.Context()); err != nil {
 				return err
 			}
-			if len(conf.DidPlcURL) == 0 {
-				return errors.New("no plc url given")
-			}
-			resolver.PlcURL, err = url.Parse(conf.DidPlcURL)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("%#v\n", resolver.PlcURL)
-			doc, err := resolver.GetDocument(cmd.Context(), args[0])
+			doc, err := cx.resolver.GetDocument(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -360,15 +399,86 @@ func newResolveCmd() *cobra.Command {
 	return &c
 }
 
-func newCacheCmd() *cobra.Command {
+func newServiceJwtCmd() *cobra.Command {
+	var (
+		key          string
+		checkWithPlc bool
+		multibase    bool
+		exp          time.Duration
+		lxm          string
+	)
+	c := cobra.Command{
+		Use:   "service-jwt",
+		Short: "Generate a service JWT given a DID and a private Key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			did := args[0]
+			rawkey, err := os.ReadFile(key)
+			if err != nil {
+				return err
+			}
+			key, err := crypto.ParsePrivateBytesK256(rawkey)
+			if err != nil {
+				return err
+			}
+			pubkey, err := key.PublicKey()
+			if err != nil {
+				return err
+			}
+			opts := auth.ServiceJwtOpts{
+				Iss:     did,
+				Aud:     did,
+				KeyPair: key,
+			}
+			if exp > 0 {
+				expiration := time.Now().Add(exp)
+				opts.Exp = &expiration
+			}
+			token, err := auth.CreateServiceJwt(&opts)
+			if err != nil {
+				return err
+			}
+			if multibase {
+				fmt.Fprintf(cmd.OutOrStdout(), "private key multibase: %s\n", key.Multibase())
+				fmt.Fprintf(cmd.OutOrStdout(), "public key multibase:  %s\n", pubkey.Multibase())
+				fmt.Fprintf(cmd.OutOrStdout(), "\n")
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", token)
+			return nil
+		},
+	}
+	c.Flags().StringVarP(&key, "key", "k", key, "filepath to a private key")
+	c.Flags().BoolVarP(&multibase, "multibase", "m", multibase, "print the multibase public key as well")
+	c.Flags().BoolVar(&checkWithPlc, "check-with-plc", checkWithPlc, "Verify that the private key matches the public key stored in a public PLC server")
+	c.Flags().DurationVarP(&exp, "expiration", "e", exp, "set the expiration duration")
+	c.Flags().StringVarP(&lxm, "lexicon-method", "L", lxm, "lexicon method to use inside the jwt")
+	return &c
+}
+
+func newCacheCmd(cx *Context) *cobra.Command {
 	c := cobra.Command{
 		Use:   "cache",
-		Short: "Manage the disk cache",
+		Short: "Manage cached data.",
 	}
 	c.AddCommand(
 		&cobra.Command{
-			Use: "clear", Aliases: []string{"purge"}, Short: "Completely purge the disk cache",
-			RunE: func(cmd *cobra.Command, args []string) error { return os.RemoveAll(xdg.Cache("at")) },
+			Use: "clear", Aliases: []string{"purge"}, Short: "Completely purge the cache",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ctx := cmd.Context()
+				err := cx.init(ctx)
+				if err != nil {
+					return err
+				}
+				err = didcache.Purge(ctx, cx.cacheDB)
+				if err != nil {
+					return err
+				}
+				err = httpcache.Purge(ctx, cx.cacheDB)
+				if err != nil {
+					return err
+				}
+				return nil
+			},
 		},
 	)
 	return &c
@@ -379,11 +489,6 @@ func newTestCmd() *cobra.Command {
 		Use:    "test",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// base := "/tmp/test-cache"
-			base := args[0]
-			cleaner := cleaner{basedir: base}
-			cache := fileCache{dir: base, cleaner: &cleaner}
-			cache.clean()
 			return nil
 		},
 	}

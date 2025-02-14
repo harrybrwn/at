@@ -1,6 +1,7 @@
 package ipldutil
 
 import (
+	stderrors "errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -11,10 +12,9 @@ import (
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/schema"
 	schemadmt "github.com/ipld/go-ipld-prime/schema/dmt"
-	"github.com/pkg/errors"
 )
 
-var ErrWrongType = errors.New("wrong type")
+var ErrWrongType = stderrors.New("wrong type")
 
 const maxRecursionLevel = 1 << 10
 
@@ -37,6 +37,7 @@ var (
 	goTypeSyntaxCID    = reflect.TypeOf(syntax.CID(""))
 	goTypeSyntaxCIDPtr = reflect.TypeOf(ptr(syntax.CID("")))
 	goTypeTime         = reflect.TypeOf(time.Time{})
+	goTypeAny          = reflect.TypeOf((any)(nil))
 
 	schemaTypeBool   = schema.SpawnBool("Bool")
 	schemaTypeInt    = schema.SpawnInt("Int")

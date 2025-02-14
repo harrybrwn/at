@@ -9,12 +9,14 @@ import (
 	"path"
 
 	"github.com/bluesky-social/indigo/atproto/syntax"
+	gocid "github.com/ipfs/go-cid"
 	"github.com/pkg/errors"
 
 	atpapi "github.com/harrybrwn/at/api/com/atproto"
 	"github.com/harrybrwn/at/internal/accountstore"
 	"github.com/harrybrwn/at/internal/actorstore"
 	"github.com/harrybrwn/at/internal/auth"
+	"github.com/harrybrwn/at/internal/cid"
 	"github.com/harrybrwn/at/internal/repo"
 	"github.com/harrybrwn/at/xrpc"
 )
@@ -109,7 +111,7 @@ func (pds *PDS) GetRecord(ctx context.Context, r *atpapi.RepoGetRecordParams) (*
 	defer rr.Close()
 
 	uri := fmt.Sprintf("at://%s/%s/%s", did, r.Collection, r.RKey)
-	res, err := rr.GetRecord(ctx, syntax.ATURI(uri), r.CID, false)
+	res, err := rr.GetRecord(ctx, syntax.ATURI(uri), (*gocid.Cid)(r.CID), false)
 	if err != nil {
 		return nil, xrpc.Wrap(err, xrpc.RecordNotFound, "couldn't find record")
 	}
@@ -118,7 +120,7 @@ func (pds *PDS) GetRecord(ctx context.Context, r *atpapi.RepoGetRecordParams) (*
 	}
 	return &atpapi.RepoGetRecordResponse{
 		URI:   res.URI,
-		CID:   res.CID,
+		CID:   cid.Cid(res.CID),
 		Value: res.Value,
 	}, nil
 }
@@ -176,7 +178,7 @@ func (pds *PDS) PutRecord(ctx context.Context, r *atpapi.RepoPutRecordRequest) (
 			}
 			// TODO write assertNoExplicitSlurs(rkey, record)
 			if r.SwapCommit.ByteLen() > 0 {
-				update.SwapCID = &r.SwapCommit
+				update.SwapCID = (*gocid.Cid)(&r.SwapCommit)
 			}
 			// TODO Set update.ValidationStatus by getting the lexicon
 			// definition dynamically and validating the record.
@@ -198,7 +200,7 @@ func (pds *PDS) PutRecord(ctx context.Context, r *atpapi.RepoPutRecordRequest) (
 			}
 			// TODO write assertNoExplicitSlurs(rkey, record)
 			if r.SwapCommit.ByteLen() > 0 {
-				create.SwapCID = &r.SwapCommit
+				create.SwapCID = (*gocid.Cid)(&r.SwapCommit)
 			}
 			// TODO Set create.ValidationStatus by getting the lexicon
 			// definition dynamically and validating the record.
@@ -211,7 +213,7 @@ func (pds *PDS) PutRecord(ctx context.Context, r *atpapi.RepoPutRecordRequest) (
 			commit = nil
 			return nil
 		}
-		commit, err = tx.Repo.ProcessWrites(ctx, []repo.PreparedWrite{write}, r.SwapCommit)
+		commit, err = tx.Repo.ProcessWrites(ctx, []repo.PreparedWrite{write}, gocid.Cid(r.SwapCommit))
 		return err
 	})
 	if err != nil {
@@ -222,7 +224,7 @@ func (pds *PDS) PutRecord(ctx context.Context, r *atpapi.RepoPutRecordRequest) (
 	}
 	return &atpapi.RepoPutRecordResponse{
 		URI: write.GetURI(),
-		CID: write.GetCID(),
+		CID: cid.Cid(write.GetCID()),
 	}, nil
 }
 

@@ -1,9 +1,8 @@
-package main
+package didcache
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/bluesky-social/indigo/atproto/identity"
 	"github.com/bluesky-social/indigo/atproto/syntax"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -26,7 +26,7 @@ const DIDMaxLen = 2 * 1024
 
 type CacheConfig struct{}
 
-func cache(d identity.Directory, cleaner CacheCleaner, dir string) *cacheDirectory {
+func NewFileCache(d identity.Directory, cleaner CacheCleaner, dir string) *cacheDirectory {
 	memcache := identity.NewCacheDirectory(
 		d,
 		250_000,
@@ -313,7 +313,7 @@ func (fc *fileCache) didPath(did syntax.DID) string {
 	return fc.path("dids", did)
 }
 
-func (fc *fileCache) start(ctx context.Context) {
+func (fc *fileCache) Start(ctx context.Context) {
 	fc.clean()
 	ticker := time.NewTicker(time.Second * 30)
 	defer ticker.Stop()

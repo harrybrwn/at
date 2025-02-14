@@ -3,7 +3,6 @@ package xrpc
 import (
 	"context"
 	"fmt"
-	"io"
 	"iter"
 	"net/http"
 	"net/url"
@@ -94,15 +93,9 @@ type FromQuery interface {
 	FromQuery(url.Values) error
 }
 
-type FromBody interface {
-	FromBody(r io.Reader) error
-}
-
-type Request interface {
-	FromQuery
-	FromBody
-	New() Request
-}
+// type FromBody interface {
+// 	FromBody(r io.Reader) error
+// }
 
 type RPC interface {
 	Method() Method
