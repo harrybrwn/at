@@ -38,6 +38,7 @@ var (
 	goTypeSyntaxCIDPtr = reflect.TypeOf(ptr(syntax.CID("")))
 	goTypeTime         = reflect.TypeOf(time.Time{})
 	goTypeAny          = reflect.TypeOf((any)(nil))
+	goTypeMapStringAny = reflect.TypeOf((map[string]any)(nil))
 
 	schemaTypeBool   = schema.SpawnBool("Bool")
 	schemaTypeInt    = schema.SpawnInt("Int")

@@ -40,11 +40,18 @@ func (a *simpleValueAssembler) BeginMap(sizeHint int64) (datamodel.MapAssembler,
 	switch v.Kind() {
 	case reflect.Map:
 		return &mapAssembler{
-			v: v,
-			m: make(map[string]reflect.Value),
+			v:  v,
+			tp: v.Type().Elem(),
+			m:  make(map[string]reflect.Value),
 		}, nil
 	case reflect.Interface:
-		return newEmptyMapAssembler(), nil
+		mv := reflect.MakeMap(goTypeMapStringAny)
+		v.Set(mv)
+		return &mapAssembler{
+			v:  mv,
+			tp: mv.Type().Elem(),
+			m:  make(map[string]reflect.Value),
+		}, nil
 	case reflect.Struct:
 		ma := valueStructAssembler{v: v}
 		return &ma, ma.build()
@@ -54,10 +61,11 @@ func (a *simpleValueAssembler) BeginMap(sizeHint int64) (datamodel.MapAssembler,
 }
 
 func (a *simpleValueAssembler) BeginList(sizeHint int64) (datamodel.ListAssembler, error) {
-	return &listAssembler{
+	la := listAssembler{
 		dst:    a.v,
 		values: make([]reflect.Value, 0, sizeHint),
-	}, nil
+	}
+	return &la, nil
 }
 
 func (a *simpleValueAssembler) AssignNull() error {
@@ -147,7 +155,7 @@ func (a *simpleValueAssembler) AssignBytes(b []byte) error {
 		if len(b) > v.Len() {
 			return errors.Errorf("cannot assign % bytes to [%d]byte", len(b), v.Len())
 		}
-		for i := 0; i < v.Len(); i++ {
+		for i := 0; i < len(b); i++ {
 			a.v.Index(i).Set(reflect.ValueOf(b[i]))
 		}
 		return nil
@@ -164,14 +172,6 @@ func (a *simpleValueAssembler) AssignBytes(b []byte) error {
 
 func (a *simpleValueAssembler) AssignLink(l datamodel.Link) error {
 	v := a.ptrGuard()
-	if !v.IsValid() {
-		cid, err := cid.Cast([]byte(l.Binary()))
-		if err != nil {
-			return err
-		}
-		a.v = reflect.ValueOf(cid)
-		return nil
-	}
 	switch v.Type() {
 	case goTypeCid:
 		cid, err := cid.Cast([]byte(l.Binary()))
@@ -195,12 +195,12 @@ func (a *simpleValueAssembler) AssignLink(l datamodel.Link) error {
 		v.Set(reflect.ValueOf(cid))
 		return nil
 	default:
-		if v.Kind() == reflect.Interface && v.IsNil() && v.CanSet() {
+		if v.Kind() == reflect.Interface && v.CanSet() {
 			cid, err := cid.Cast([]byte(l.Binary()))
 			if err != nil {
 				return err
 			}
-			v.Set(reflect.ValueOf(cid))
+			v.Set(reflect.ValueOf(map[string]any{"$link": cid}))
 			return nil
 		}
 		return errors.Wrapf(ErrWrongType, "could not assign link to type %v", v.Type())
@@ -300,13 +300,28 @@ func (a *simpleValueAssembler) AssignNode(n datamodel.Node) error { // if you al
 }
 
 func (a *simpleValueAssembler) Prototype() datamodel.NodePrototype {
-	// return nodePrototypeFromKind(a.v)
 	return nil
 }
 
-var _ datamodel.MapAssembler = (*valueStructAssembler)(nil)
+type baseMapAssembler struct{}
+
+// must be followed by call to AssembleValue.
+func (baseMapAssembler) AssembleKey() datamodel.NodeAssembler {
+	panic("help I don't know how to implement AssembleKey")
+}
+
+// must be called immediately after AssembleKey.
+func (baseMapAssembler) AssembleValue() datamodel.NodeAssembler {
+	panic("help I don't know how to implement AssembleValue")
+}
+
+func (baseMapAssembler) KeyPrototype() datamodel.NodePrototype {
+	// dag-cbor says all keys should be strings
+	return basicnode.Prototype.String
+}
 
 type valueStructAssembler struct {
+	baseMapAssembler
 	v      reflect.Value
 	fields map[string]field
 }
@@ -389,24 +404,9 @@ func (a *valueStructAssembler) AssembleEntry(k string) (datamodel.NodeAssembler,
 
 func (a *valueStructAssembler) Finish() error { return nil }
 
-func (a *valueStructAssembler) KeyPrototype() datamodel.NodePrototype {
-	return basicnode.Prototype.String
-}
-
 func (a *valueStructAssembler) ValuePrototype(k string) datamodel.NodePrototype {
 	f := a.fields[k]
 	return nodePrototypeFromKind(f.v)
-	// return nil
-}
-
-// must be followed by call to AssembleValue.
-func (a *valueStructAssembler) AssembleKey() datamodel.NodeAssembler {
-	panic("help I don't know how to implement AssembleKey")
-}
-
-// must be called immediately after AssembleKey.
-func (a *valueStructAssembler) AssembleValue() datamodel.NodeAssembler {
-	panic("help I don't know how to implement AssembleValue")
 }
 
 func nodePrototypeFromKind(v reflect.Value) datamodel.NodePrototype {
@@ -431,8 +431,6 @@ func nodePrototypeFromKind(v reflect.Value) datamodel.NodePrototype {
 	}
 	return basicnode.Prototype.Any
 }
-
-var _ datamodel.ListAssembler = (*listAssembler)(nil)
 
 type listAssembler struct {
 	dst    reflect.Value
@@ -475,19 +473,20 @@ func (a *listAssembler) ValuePrototype(idx int64) datamodel.NodePrototype {
 }
 
 type mapAssembler struct {
-	v reflect.Value
-	m map[string]reflect.Value
+	baseMapAssembler
+	v  reflect.Value
+	tp reflect.Type // value type
+	m  map[string]reflect.Value
 }
 
 // shortcut combining AssembleKey and AssembleValue into one step; valid when the key is a string kind.
 func (a *mapAssembler) AssembleEntry(k string) (datamodel.NodeAssembler, error) {
-	v := reflect.New(a.v.Type().Elem())
+	v := reflect.New(a.tp)
 	a.m[k] = v
-	return &anyAssembler{
-		simpleValueAssembler: &simpleValueAssembler{
-			v.Elem(),
-		},
-	}, nil
+	as := simpleValueAssembler{
+		v: v.Elem(),
+	}
+	return &as, nil
 }
 
 func (a *mapAssembler) Finish() error {
@@ -497,97 +496,10 @@ func (a *mapAssembler) Finish() error {
 	return nil
 }
 
-func (a *mapAssembler) KeyPrototype() datamodel.NodePrototype {
-	// dag-cbor says all keys should be strings
-	return basicnode.Prototype.String
-}
-
 func (a *mapAssembler) ValuePrototype(k string) datamodel.NodePrototype {
 	v := a.v.MapIndex(reflect.ValueOf(k))
 	// TODO this is probably wrong and will cause problems called
 	return nodePrototypeFromKind(v)
-}
-
-// must be followed by call to AssembleValue.
-func (a *mapAssembler) AssembleKey() datamodel.NodeAssembler {
-	panic("help I don't know how to implement AssembleKey")
-}
-
-// must be called immediately after AssembleKey.
-func (a *mapAssembler) AssembleValue() datamodel.NodeAssembler {
-	panic("help I don't know how to implement AssembleValue")
-}
-
-type anyAssembler struct {
-	*simpleValueAssembler
-}
-
-func newEmptyMapAssembler() *mapAssembler {
-	tp := reflect.TypeOf((map[string]any)(nil))
-	return &mapAssembler{
-		v: reflect.MakeMap(tp),
-		m: make(map[string]reflect.Value),
-	}
-}
-
-func (aa *anyAssembler) BeginMap(sizeHint int64) (datamodel.MapAssembler, error) {
-	tp := reflect.TypeOf((map[string]any)(nil))
-	v := reflect.MakeMap(tp)
-	aa.v.Set(v)
-	ma := mapAssembler{
-		v: v,
-		m: make(map[string]reflect.Value),
-	}
-	return &ma, nil
-}
-
-func (aa *anyAssembler) BeginList(sizeHint int64) (datamodel.ListAssembler, error) {
-	la := listAssembler{
-		dst:    aa.v,
-		values: make([]reflect.Value, 0, sizeHint),
-	}
-	return &la, nil
-}
-
-func (aa *anyAssembler) AssignString(s string) error {
-	if aa.v.IsValid() {
-		if aa.v.Kind() == reflect.Interface && aa.v.CanSet() {
-			aa.v.Set(reflect.ValueOf(s))
-			return nil
-		}
-		return aa.simpleValueAssembler.AssignString(s)
-	}
-	aa.v = reflect.ValueOf(s)
-	return nil
-}
-
-func (aa *anyAssembler) AssignBytes(b []byte) error {
-	if aa.v.IsValid() {
-		return aa.simpleValueAssembler.AssignBytes(b)
-	}
-	aa.v = reflect.ValueOf(b)
-	return nil
-}
-
-func (aa *anyAssembler) AssignLik(l datamodel.Link) error {
-	if aa.v.IsValid() {
-		return aa.simpleValueAssembler.AssignLink(l)
-	}
-	aa.v = reflect.ValueOf(cid.Cid{})
-	cid, err := cid.Cast([]byte(l.Binary()))
-	if err != nil {
-		return err
-	}
-	aa.v.Set(reflect.ValueOf(cid))
-	return nil
-}
-
-func (aa *anyAssembler) AssignInt(i int64) error {
-	if aa.v.IsValid() {
-		return aa.simpleValueAssembler.AssignInt(i)
-	}
-	aa.v = reflect.ValueOf(i)
-	return nil
 }
 
 func ptr[T any](v T) *T { return &v }
