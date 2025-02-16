@@ -34,7 +34,7 @@ func TestRepo(t *testing.T) {
 
 func TestFormatInitCommit(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := createFakeDID()
 	key := must(crypto.GeneratePrivateKeyK256())
 	blocks := blockstore.InMemory()
@@ -87,7 +87,7 @@ func TestFormatInitCommit(t *testing.T) {
 }
 
 func TestLoadRepo(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	is := is.New(t)
 	ds, err := sqlite.File(
@@ -105,7 +105,7 @@ func TestLoadRepo(t *testing.T) {
 }
 
 func TestCommit(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	is := is.New(t)
 	bs := blockstore.InMemory()
@@ -125,7 +125,7 @@ func TestCommit(t *testing.T) {
 }
 
 func TestRepoPutRecord(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	is := is.New(t)
 	database, err := sqlite.InMemory(sqlite.JournalMode("WAL"))
@@ -168,7 +168,7 @@ func TestRepoPutRecord(t *testing.T) {
 func TestRepoGetRecord(t *testing.T) {
 	t.Skip()
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:kzvsijt4365vidgqv7o6wksi"
 	database, err := sqlite.File(
 		"testdata/2/actors/02/did:plc:kzvsijt4365vidgqv7o6wksi/store.sqlite",
@@ -194,7 +194,7 @@ func TestRepoGetRecord(t *testing.T) {
 
 func TestNewRepo(t *testing.T) {
 	t.Skip()
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	is := is.New(t)
 	db, err := sqlite.File(

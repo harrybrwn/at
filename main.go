@@ -44,7 +44,7 @@ func NewRootCmd() *cobra.Command {
 		debug       bool
 	)
 	c := cobra.Command{
-		Use:           "at [at://<resource>]",
+		Use:           "at [[at://]<resource>]",
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,

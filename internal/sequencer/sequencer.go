@@ -23,7 +23,7 @@ type SeqSetter interface {
 	SetSeq(seq int64)
 }
 
-type Bus[T SeqSetter] pubsub.Bus[pubsub.Empty, *Event[T]]
+type Bus[T SeqSetter] = pubsub.Bus[pubsub.Empty, *Event[T]]
 
 type Seq[T SeqSetter] struct {
 	db       *sql.DB

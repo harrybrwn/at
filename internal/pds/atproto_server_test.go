@@ -1,7 +1,6 @@
 package pds
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -16,7 +15,7 @@ import (
 func TestCreateInviteCode(t *testing.T) {
 	is := is.New(t)
 	pds := testPDS(t, localhost)
-	ctx := context.Background()
+	ctx := t.Context()
 	res, err := pds.CreateInviteCode(ctx, &atproto.ServerCreateInviteCodeRequest{
 		UseCount: 1,
 	})
@@ -27,7 +26,7 @@ func TestCreateInviteCode(t *testing.T) {
 func TestCreateAccount(t *testing.T) {
 	is := is.New(t)
 	pds := testPDS(t, localhost)
-	ctx := context.Background()
+	ctx := t.Context()
 	invite, err := pds.CreateInviteCode(ctx, &atproto.ServerCreateInviteCodeRequest{UseCount: 1})
 	is.NoErr(err)
 	res, err := pds.CreateAccount(ctx, &atproto.ServerCreateAccountRequest{
@@ -47,7 +46,7 @@ func TestCreateAccount(t *testing.T) {
 func TestCreateAccount_WithDID(t *testing.T) {
 	is := is.New(t)
 	pds := testPDS(t, localhost)
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx = auth.StashUser(ctx, &xrpc.Auth{
 		DID:    "did:plc:nsu4iq7726acidyqpha2zuk3",
 		Handle: "harry.test",
@@ -71,7 +70,7 @@ func TestCreateAccount_WithDID(t *testing.T) {
 func TestCreateSession(t *testing.T) {
 	is := is.New(t)
 	pds := testPDS(t, localhost)
-	ctx := context.Background()
+	ctx := t.Context()
 	eventCount := 0
 	go func() {
 		sub, err := pds.Bus.Subscriber(ctx)

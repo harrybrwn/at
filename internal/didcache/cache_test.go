@@ -1,7 +1,6 @@
 package didcache
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -41,7 +40,7 @@ var sampleDoc = did.Document{
 }
 
 func TestDocCache(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	is := is.New(t)
 	c, err := NewDIDCache(":memory:", time.Second, time.Minute)
 	is.NoErr(err)
@@ -62,7 +61,7 @@ func TestDocCache(t *testing.T) {
 }
 
 func TestDIDCache(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	is := is.New(t)
 	c, err := NewDIDCache("file::memory:?cache=shared", time.Second, time.Minute)
 	is.NoErr(err)
@@ -88,7 +87,7 @@ func TestDIDCache(t *testing.T) {
 }
 
 func TestIdentityCache(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	is := is.New(t)
 	c, err := NewDIDCache("file::memory:?cache=shared", time.Second, time.Minute)
 	is.NoErr(err)

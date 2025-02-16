@@ -11,7 +11,7 @@ func TestChannelBus(t *testing.T) {
 	type Event struct {
 		Name string
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx, cancel := context.WithTimeout(ctx, time.Millisecond*10)
 	defer cancel()
 	bus := ChannelBus[*Event]{queues: make([]queue[*Event], 0)}

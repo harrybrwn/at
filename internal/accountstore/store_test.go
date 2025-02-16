@@ -21,7 +21,7 @@ func Test(t *testing.T) {
 
 func TestAccountStore_CreateAccount(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db, err := sql.Open("sqlite3", ":memory:")
 	is.NoErr(err)
 	defer db.Close()
@@ -84,7 +84,7 @@ func TestCreateAccount_Func(t *testing.T) {
 	}
 
 	// is := is.New(t)
-	// ctx := context.Background()
+	// ctx := t.Context()
 	// db, err := sql.Open("sqlite3", "file:testdata/2/account.sqlite?mode=ro&immutable=true")
 	// is.NoErr(err)
 	// defer db.Close()
@@ -125,7 +125,7 @@ func TestVerifyPassword_Func(t *testing.T) {
 		t.Skip()
 	}
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db, err := sql.Open("sqlite3", "file:testdata/2/account.sqlite?mode=ro&immutable=true")
 	is.NoErr(err)
 	defer db.Close()
@@ -136,7 +136,7 @@ func TestVerifyPassword_Func(t *testing.T) {
 
 func TestCreateSession(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db, err := sql.Open("sqlite3", ":memory:")
 	is.NoErr(err)
 	defer db.Close()

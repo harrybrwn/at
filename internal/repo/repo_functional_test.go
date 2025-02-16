@@ -3,7 +3,6 @@
 package repo
 
 import (
-	"context"
 	"net/http"
 	"net/url"
 	"testing"
@@ -20,8 +19,7 @@ import (
 )
 
 func TestFunc_LoadRepo(t *testing.T) {
-	t.Skip()
-	ctx := context.Background()
+	ctx := t.Context()
 	is := is.New(t)
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	client := xrpc.NewClient(
@@ -49,8 +47,8 @@ func TestFunc_LoadRepo(t *testing.T) {
 }
 
 func TestFunc_VerifyServiceJwt(t *testing.T) {
-	t.Skip()
-	ctx := context.Background()
+	t.Skip("Verifies that the test key is in sync with the plc-stored public key")
+	ctx := t.Context()
 	rawtoken := servicejwt(t, "")
 	resolver := atp.Resolver{
 		HandleResolver: must(atp.NewDefaultHandleResolver()),

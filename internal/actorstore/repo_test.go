@@ -31,7 +31,7 @@ func init() {
 
 func TestSQLRepo(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := syntax.DID("did:plc:kzvsijt4365vidgqv7o6wksi")
 	as := ActorStore{Dir: "./testdata/2/actors", ReadOnly: true}
 	r, err := as.Repo(did, testKey(t))
@@ -51,7 +51,7 @@ func TestSQLRepo(t *testing.T) {
 
 func TestCreateRepo(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	key := must(crypto.GeneratePrivateKeyK256())
 	as, blob := teststore(t, did, key)
@@ -72,7 +72,7 @@ func TestCreateRepo(t *testing.T) {
 
 func TestFormatCommit(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := "did:plc:nsu4iq7726acidyqpha2zuk3"
 	key, err := crypto.GeneratePrivateKeyK256()
 	is.NoErr(err)

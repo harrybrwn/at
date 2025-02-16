@@ -1,7 +1,6 @@
 package pds
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -16,7 +15,7 @@ func TestDescribeRepo(t *testing.T) {
 	t.Skip()
 	is := is.New(t)
 	pds := testPDS(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	res, err := pds.DescribeRepo(ctx, &atproto.RepoDescribeRepoParams{
 		Repo: must(syntax.ParseAtIdentifier("did:plc:ewvi7nxzyoun6zhxrhs64oiz")),
 	})

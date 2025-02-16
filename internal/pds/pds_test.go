@@ -1,7 +1,6 @@
 package pds
 
 import (
-	"context"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -52,7 +51,7 @@ func testPDS(t *testing.T, opts ...testConfOption) *PDS {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = pds.Accounts.Migrate(context.Background())
+	err = pds.Accounts.Migrate(t.Context())
 	if err != nil {
 		panic(err)
 	}

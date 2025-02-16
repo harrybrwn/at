@@ -10,7 +10,7 @@ import (
 )
 
 func TestMap(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	in := []string{"a", "b", "c", "d", "e"}
 	results, err := Map(ctx, in, func(ctx context.Context, v string) (string, error) {
 		return "_" + v, nil
@@ -33,7 +33,7 @@ func TestMapCancellation(t *testing.T) {
 		n  atomic.Int32
 		in = make([]int, 60)
 	)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	for i := range in {
 		in[i] = i
 	}
@@ -53,7 +53,7 @@ func TestMapCancellation(t *testing.T) {
 		t.Error("shouldn't have executed all the jobs")
 	}
 
-	ctx, cancel = context.WithCancel(context.Background())
+	ctx, cancel = context.WithCancel(t.Context())
 	_, err = Map(ctx, in, func(context.Context, int) (int, error) {
 		cancel()
 		return 0, nil
@@ -71,7 +71,7 @@ func TestFirstOf(t *testing.T) {
 		}
 	}
 	t.Run("SkipsErrors", func(t *testing.T) {
-		ctx := context.Background()
+		ctx := t.Context()
 		start := time.Now()
 		res, err := FirstOf(
 			ctx, 0,
@@ -91,7 +91,7 @@ func TestFirstOf(t *testing.T) {
 	})
 
 	t.Run("Timeout", func(t *testing.T) {
-		ctx := context.Background()
+		ctx := t.Context()
 		ctrl := NewCtrl[int, int](&JobConfig{Timeout: time.Millisecond * 10})
 		_, err := ctrl.FirstOf(
 			ctx,
@@ -108,7 +108,7 @@ func TestFirstOf(t *testing.T) {
 	})
 
 	t.Run("Canceled", func(t *testing.T) {
-		ctx := context.Background()
+		ctx := t.Context()
 		start := time.Now()
 		ctx, cancel := context.WithCancel(ctx)
 		var jobs Jobs[int, int]
@@ -135,7 +135,7 @@ func TestFirstOf(t *testing.T) {
 func TestMap_Err(t *testing.T) {
 	errTest := errors.New("test error")
 	var ran5 atomic.Int32
-	ctx := context.Background()
+	ctx := t.Context()
 	in := []int{1, 2, 3, 4, 5}
 	res, err := NewCtrl[int, string](&JobConfig{Timeout: time.Minute}).Map(ctx, in, func(_ context.Context, v int) (string, error) {
 		select {
@@ -178,7 +178,7 @@ func TestMap_Err(t *testing.T) {
 
 func TestDo(t *testing.T) {
 	errTest := errors.New("test error")
-	ctx := context.Background()
+	ctx := t.Context()
 	var n atomic.Int32
 	j := func(context.Context) error {
 		n.Add(1)

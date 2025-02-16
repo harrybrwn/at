@@ -2,6 +2,8 @@
 
 Some random atproto musings.
 
+Parts of this repo were translated from [atproto](https://github.com/bluesky-social/atproto).
+
 # TODO
 
 ### Entryway

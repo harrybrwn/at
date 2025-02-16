@@ -1,7 +1,6 @@
 package xrpc
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +15,7 @@ import (
 )
 
 func TestSubscription(t *testing.T) {
-	// ctx := context.Background()
+	// ctx := t.Context()
 	// c, _ := websocket.Accept(nil, nil, nil)
 	// w, _ := c.Writer(ctx, websocket.MessageText)
 }
@@ -58,7 +57,7 @@ func TestWebsockets(t *testing.T) {
 		}))
 	}()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	c, _, err := websocket.Dial(ctx, "ws://localhost:9998", nil)
 	if err != nil {
 		log.Fatal(err)

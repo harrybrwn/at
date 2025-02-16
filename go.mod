@@ -1,6 +1,6 @@
 module github.com/harrybrwn/at
 
-go 1.23.4
+go 1.24
 
 require (
 	github.com/bluesky-social/indigo v0.0.0-20241203232450-9ea78700c9b0

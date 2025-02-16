@@ -177,13 +177,11 @@ func MergeFunc[V any](x, y iter.Seq[V], f func(V, V) int) iter.Seq[V] {
 	}
 }
 
-func MapStringers[S ~[]T, T fmt.Stringer](s S) iter.Seq[string] {
+func MapStringers[T fmt.Stringer](seq iter.Seq[T]) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for _, e := range s {
-			if !yield(e.String()) {
-				return
-			}
-		}
+		seq(func(e T) bool {
+			return yield(e.String())
+		})
 	}
 }
 

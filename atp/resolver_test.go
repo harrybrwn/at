@@ -18,7 +18,7 @@ func init() {
 }
 
 func TestHandleResolver(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	is := is.New(t)
 	r, err := NewDefaultHandleResolver()
 	is.NoErr(err)

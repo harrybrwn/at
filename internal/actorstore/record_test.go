@@ -17,7 +17,7 @@ import (
 
 func TestGetRecord(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := syntax.DID("did:plc:kzvsijt4365vidgqv7o6wksi")
 	as := ActorStore{Dir: "./testdata/0/actors", ReadOnly: true}
 	rr, err := as.Record(did)
@@ -52,7 +52,7 @@ func TestGetRecord(t *testing.T) {
 
 func TestListForCollection(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := syntax.DID("did:plc:kzvsijt4365vidgqv7o6wksi")
 	as := ActorStore{Dir: "./testdata/0/actors", ReadOnly: true}
 	rr, err := as.Record(did)
@@ -71,7 +71,7 @@ func TestListForCollection(t *testing.T) {
 
 func TestPutRecord(t *testing.T) {
 	is := is.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	did := syntax.DID("did:plc:kzvsijt4365vidgqv7o6wksi")
 	as := testStore(t)
 	rr, err := as.CreateAsRecord(did, testKey(t))
